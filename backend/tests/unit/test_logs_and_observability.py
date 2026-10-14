@@ -5,10 +5,13 @@ import sys
 from collections.abc import Iterator
 
 import pytest
+from fastapi.testclient import TestClient
 from uvicorn.config import LOGGING_CONFIG
 
+from app.application import create_app
 from app.core.logs import JsonFormatter, configure_logging, mask_phone
 from app.core.observability import SCRUBBED, scrub_event
+from tests.conftest import make_settings
 
 
 def test_mask_phone_keeps_only_the_last_four_digits() -> None:
@@ -64,28 +67,43 @@ def restore_logging() -> Iterator[None]:
         lg.disabled = disabled
 
 
-@pytest.mark.usefixtures("restore_logging")
-def test_server_errors_go_through_the_json_formatter_without_their_message(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    # What uvicorn (and `fastapi run`/`fastapi dev`) does before importing the app...
-    logging.config.dictConfig(LOGGING_CONFIG)
-    # ...and what create_app() does when it is imported.
-    configure_logging("INFO")
-
+def _report_like_uvicorn() -> None:
     try:
         _fail_with_a_phone()
     except ValueError as exc:
         # Exactly how uvicorn reports an unhandled exception.
         logging.getLogger("uvicorn.error").error("Exception in ASGI application", exc_info=exc)  # noqa: TRY400
 
-    captured = capsys.readouterr()
-    output = captured.out + captured.err
+
+def _assert_clean_json(out: str, err: str) -> None:
+    output = out + err
     assert "529511234567" not in output
     assert "Traceback" not in output
-    line = json.loads(captured.out.strip().splitlines()[-1])
-    assert line["logger"] == "uvicorn.error"
-    assert line["exc_type"] == "ValueError"
+    last = json.loads(out.strip().splitlines()[-1])
+    assert last["logger"] == "uvicorn.error"
+    assert last["exc_type"] == "ValueError"
+
+
+@pytest.mark.usefixtures("restore_logging")
+def test_server_config_applied_before_the_app_is_imported(capsys: pytest.CaptureFixture[str]) -> None:
+    # `fastapi dev` (reload child), `--workers` and uvicorn factories: the server configures
+    # logging first and imports the app afterwards.
+    logging.config.dictConfig(LOGGING_CONFIG)
+    configure_logging("INFO")
+    _report_like_uvicorn()
+    _assert_clean_json(*capsys.readouterr())
+
+
+@pytest.mark.usefixtures("restore_logging")
+def test_server_config_applied_after_the_app_is_imported(capsys: pytest.CaptureFixture[str]) -> None:
+    # `fastapi run`: the app is imported first (create_app configures logging), then uvicorn
+    # applies its own config, then the lifespan starts. The lifespan must win.
+    app = create_app(make_settings())
+    logging.config.dictConfig(LOGGING_CONFIG)
+    with TestClient(app):
+        assert logging.getLogger("uvicorn.access").disabled
+        _report_like_uvicorn()
+    _assert_clean_json(*capsys.readouterr())
 
 
 def test_sentry_events_lose_bodies_cookies_signatures_and_exception_text() -> None:

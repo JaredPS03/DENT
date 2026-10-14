@@ -20,6 +20,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        # Again here: `fastapi run` imports the app (and configures logging) BEFORE uvicorn
+        # applies its own logging config, which brings back plain-text tracebacks and the access
+        # log. The lifespan always runs after the server's config, whatever the launcher.
+        configure_logging(settings.log_level)
         pool = create_pool(settings)
         # Do not block startup on the database: /health reports it if it is down.
         await pool.open(wait=False)

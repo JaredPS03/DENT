@@ -1,3 +1,4 @@
+import time
 from collections.abc import Iterator
 from typing import Any
 from uuid import UUID, uuid4
@@ -5,19 +6,23 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+from app.application import create_app
+from app.webhooks import whatsapp as whatsapp_webhook
+from app.whatsapp.payloads import split_payload
 from tests.conftest import (
     CLINIC_A,
     CLINIC_B,
     PHONE_NUMBER_ID_A,
     PHONE_NUMBER_ID_B,
     TEST_VERIFY_TOKEN,
+    make_settings,
     message_change,
     sign,
     status_change,
     to_body,
     webhook_payload,
 )
-from tests.integration.conftest import rows_as_clinic
+from tests.integration.conftest import FreezableProxy, rows_as_clinic
 
 URL = "/webhooks/whatsapp"
 
@@ -237,13 +242,55 @@ def test_unknown_fields_are_recorded_without_their_content(client: TestClient, d
             "contacts": [{"wa_id": "529510000555", "profile": {"name": f"Tía Lupe {marker}"}}],
         },
     }
-    assert _post(client, webhook_payload(change)) == 200
+    payload = webhook_payload(change)
+    # The marker makes this change, and so its dedup key, unique to this run.
+    (expected,), _ = split_payload(payload)
+    assert _post(client, payload) == 200
 
     rows = rows_as_clinic(
         database_url,
         CLINIC_A,
-        "select kind, payload, payload_purged_at is not null from public.webhook_events"
-        " where field = 'history' and created_at > now() - interval '1 minute'",
+        "select kind, payload, payload_purged_at is not null from public.webhook_events where dedup_key = %s",
+        (expected.dedup_key,),
     )
-    assert ("other", None, True) in rows
-    assert marker not in str(rows)
+    assert rows == [("other", None, True)]
+
+
+def test_items_keep_their_arrival_order(client: TestClient, database_url: str, wamid: str) -> None:
+    change = message_change(PHONE_NUMBER_ID_A, f"{wamid}.1")
+    for n in (2, 3):
+        change["value"]["messages"].append(dict(change["value"]["messages"][0], id=f"{wamid}.{n}"))
+    assert _post(client, webhook_payload(change)) == 200
+    assert _post(client, webhook_payload(message_change(PHONE_NUMBER_ID_A, f"{wamid}.4"))) == 200
+
+    rows = rows_as_clinic(
+        database_url,
+        CLINIC_A,
+        "select meta_id from public.webhook_events where meta_id like %s order by arrival_seq",
+        (f"{wamid}.%",),
+    )
+    assert [row[0] for row in rows] == [f"{wamid}.{n}" for n in (1, 2, 3, 4)]
+
+
+def test_a_silent_database_gets_a_503_on_time_so_meta_retries(
+    freezable_db: tuple[FreezableProxy, str],
+    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+    database_url: str,
+    wamid: str,
+) -> None:
+    proxy, url = freezable_db
+    monkeypatch.setattr(whatsapp_webhook, "STORE_DEADLINE_SECONDS", 1.0)
+    payload = webhook_payload(message_change(PHONE_NUMBER_ID_A, wamid))
+    with TestClient(create_app(make_settings(database_url=url))) as silent_client:
+        proxy.frozen.set()
+        started = time.monotonic()
+        status_code = _post(silent_client, payload)
+        elapsed = time.monotonic() - started
+        proxy.close()  # the link dies for good: stuck connections fail and get cleaned up
+    assert status_code == 503
+    assert elapsed < 2.0
+
+    # Meta retries later, against a database that answers: stored exactly once.
+    assert _post(client, payload) == 200
+    assert len(_events(database_url, CLINIC_A, wamid)) == 1

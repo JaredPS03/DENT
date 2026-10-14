@@ -51,6 +51,9 @@ def make_settings(**overrides: Any) -> Settings:
         "sentry_dsn": None,
     }
     values.update(overrides)
+    if values["environment"] != Environment.DEVELOPMENT and "database_url" not in overrides:
+        # Outside development the connection must be encrypted.
+        values["database_url"] += "?sslmode=require"
     return Settings(_env_file=None, **values)
 
 

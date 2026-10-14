@@ -1,12 +1,12 @@
 """GET /health: database and work queue. Reports status only, never error details."""
 
-import asyncio
 import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 
+from app.core.deadlines import within
 from app.db.connection import Database
 from app.dependencies import get_db
 
@@ -18,10 +18,20 @@ QUEUE_NAME = "whatsapp_inbound"
 CHECK_TIMEOUT_SECONDS = 3.0
 
 
+async def _select_one(db: Database) -> None:
+    async with db.unscoped_transaction() as conn:
+        await conn.execute("select 1")
+
+
+async def _queue_metrics(db: Database) -> None:
+    async with db.unscoped_transaction() as conn:
+        cursor = await conn.execute("select queue_length from pgmq.metrics(%s)", (QUEUE_NAME,))
+        await cursor.fetchone()
+
+
 async def _check_database(db: Database) -> bool:
     try:
-        async with asyncio.timeout(CHECK_TIMEOUT_SECONDS), db.unscoped_transaction() as conn:
-            await conn.execute("select 1")
+        await within(CHECK_TIMEOUT_SECONDS, _select_one(db))
     except Exception:
         logger.exception("health.database_failed")
         return False
@@ -30,9 +40,7 @@ async def _check_database(db: Database) -> bool:
 
 async def _check_queue(db: Database) -> bool:
     try:
-        async with asyncio.timeout(CHECK_TIMEOUT_SECONDS), db.unscoped_transaction() as conn:
-            cursor = await conn.execute("select queue_length from pgmq.metrics(%s)", (QUEUE_NAME,))
-            await cursor.fetchone()
+        await within(CHECK_TIMEOUT_SECONDS, _queue_metrics(db))
     except Exception:
         logger.exception("health.queue_failed")
         return False

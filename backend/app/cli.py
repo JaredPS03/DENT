@@ -3,9 +3,9 @@
     uv run python -m app.cli send-test-message --to +5295XXXXXXXX
 
 Sends Meta's `hello_world` template (or free text with --text, only inside the 24 h window)
-from WHATSAPP_TEST_PHONE_NUMBER_ID. Outside production it only sends to numbers listed in
-WHATSAPP_ALLOWED_TEST_NUMBERS. This is the Phase 0 gate: send, then reply from your phone and
-check that the webhook stored the reply.
+from WHATSAPP_TEST_PHONE_NUMBER_ID, only to numbers listed in WHATSAPP_ALLOWED_TEST_NUMBERS, and
+never in production. This is the first half of the Phase 0 gate; docs/puerta-fase-0.md has the
+whole check, including receiving the reply through the webhook.
 """
 
 import argparse
@@ -15,7 +15,7 @@ from collections.abc import Sequence
 
 import httpx
 
-from app.core.config import SettingsError, load_settings
+from app.core.config import Environment, SettingsError, load_settings
 from app.core.logs import mask_phone
 from app.whatsapp.client import RecipientNotAllowedError, WhatsAppApiError, WhatsAppClient
 
@@ -35,6 +35,11 @@ def _parser() -> argparse.ArgumentParser:
 
 async def _send_test_message(args: argparse.Namespace) -> int:
     settings = load_settings()
+    if settings.environment is Environment.PRODUCTION:
+        # In production every message goes out through the bot, which logs it and counts it
+        # against the clinic's cap.
+        print("Este comando es solo para desarrollo y staging; en producción no envía nada.")
+        return 2
     phone_number_id = args.phone_number_id or settings.whatsapp_test_phone_number_id
     if not phone_number_id:
         print("Falta el número que envía: usa --phone-number-id o WHATSAPP_TEST_PHONE_NUMBER_ID.")

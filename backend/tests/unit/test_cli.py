@@ -1,7 +1,7 @@
 import pytest
 
 from app import cli
-from app.core.config import SettingsError
+from app.core.config import Environment, SettingsError
 from tests.conftest import make_settings
 
 
@@ -37,3 +37,18 @@ def test_send_test_message_needs_a_sender_number(
 
     assert cli.main(["send-test-message", "--to", "+529510000101"]) == 2
     assert "WHATSAPP_TEST_PHONE_NUMBER_ID" in capsys.readouterr().out
+
+
+def test_send_test_message_never_runs_in_production(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "load_settings",
+        lambda: make_settings(
+            environment=Environment.PRODUCTION, database_url="postgresql://x/y?sslmode=require"
+        ),
+    )
+
+    assert cli.main(["send-test-message", "--to", "+529510000101", "--text", "hola"]) == 2
+    assert "producción" in capsys.readouterr().out

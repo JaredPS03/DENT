@@ -32,6 +32,12 @@ def create_pool(settings: Settings) -> AsyncConnectionPool:
             # The Supabase pooler in transaction mode does not support prepared statements.
             "prepare_threshold": None,
             "application_name": "axon-backend",
+            # Notice a dead network link in seconds instead of minutes (ignored where unsupported).
+            "keepalives": 1,
+            "keepalives_idle": 10,
+            "keepalives_interval": 5,
+            "keepalives_count": 3,
+            "tcp_user_timeout": 15000,
         },
     )
 

@@ -3,7 +3,8 @@
 GET verifies the subscription. POST, in this order: caps the body at 1 MB, validates
 X-Hub-Signature-256 on the raw bytes, parses, routes each item to its clinic and stores it in
 webhook_events. Nothing heavy happens here: Meta gets its 200 right away. Processing and
-queueing arrive in milestone 1B.
+queueing arrive in milestone 1B. If the database does not answer within the deadline, Meta gets
+a 503 and retries later; stored items are deduplicated, so a retry never duplicates them.
 """
 
 import hmac
@@ -18,6 +19,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import ValidationError
 
 from app.core.config import Settings
+from app.core.deadlines import within
 from app.core.security import verify_meta_signature
 from app.db.connection import Database
 from app.db.webhook_events import clinic_for_phone_number, insert_webhook_items
@@ -29,6 +31,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 MAX_BODY_BYTES = 1024 * 1024
+# Routing and storing one webhook never takes longer than this, even if the database hangs.
+STORE_DEADLINE_SECONDS = 8.0
 _CHALLENGE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 SettingsDep = Annotated[Settings, Depends(get_settings_from_app)]
@@ -104,6 +108,21 @@ async def receive(request: Request, settings: SettingsDep, db: DatabaseDep) -> R
     for item in items:
         by_number[item.phone_number_id].append(item)
 
+    try:
+        stored, duplicates, discarded = await within(STORE_DEADLINE_SECONDS, _route_and_store(db, by_number))
+    except TimeoutError:
+        logger.exception("whatsapp_webhook.store_deadline_exceeded", extra={"items": len(items)})
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE) from None
+
+    logger.info(
+        "whatsapp_webhook.received",
+        extra={"stored": stored, "duplicates": duplicates, "discarded": discarded},
+    )
+    return Response(status_code=status.HTTP_200_OK)
+
+
+async def _route_and_store(db: Database, by_number: dict[str, list[WebhookItem]]) -> tuple[int, int, int]:
+    """One transaction per clinic: a failure halfway keeps what was already stored."""
     stored = duplicates = discarded = 0
     for phone_number_id, number_items in by_number.items():
         clinic_id = await clinic_for_phone_number(db, phone_number_id)
@@ -118,9 +137,4 @@ async def receive(request: Request, settings: SettingsDep, db: DatabaseDep) -> R
             inserted = await insert_webhook_items(conn, clinic_id, number_items)
         stored += inserted
         duplicates += len(number_items) - inserted
-
-    logger.info(
-        "whatsapp_webhook.received",
-        extra={"stored": stored, "duplicates": duplicates, "discarded": discarded},
-    )
-    return Response(status_code=status.HTTP_200_OK)
+    return stored, duplicates, discarded
