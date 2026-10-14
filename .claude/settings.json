@@ -7,12 +7,26 @@
       "Read(*.pem)",
       "Read(*.key)",
       "Bash(supabase db reset *--linked*)",
-      "Bash(supabase db reset *--db-url*)"
+      "Bash(supabase db reset *--db-url*)",
+      "Bash(pnpm supabase db reset *--linked*)",
+      "Bash(pnpm supabase db reset *--db-url*)",
+      "Bash(pnpm exec supabase db reset *--linked*)",
+      "Bash(pnpm exec supabase db reset *--db-url*)",
+      "Bash(pnpm db:reset *--linked*)",
+      "Bash(pnpm db:reset *--db-url*)",
+      "Bash(npx supabase db reset *--linked*)",
+      "Bash(npx supabase db reset *--db-url*)"
     ],
     "ask": [
       "Bash(git push *)",
       "Bash(supabase db push *)",
-      "Bash(supabase link *)"
+      "Bash(supabase link *)",
+      "Bash(pnpm supabase db push *)",
+      "Bash(pnpm supabase link *)",
+      "Bash(pnpm exec supabase db push *)",
+      "Bash(pnpm exec supabase link *)",
+      "Bash(npx supabase db push *)",
+      "Bash(npx supabase link *)"
     ]
   }
 }

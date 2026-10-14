@@ -52,7 +52,8 @@ En otra terminal, para el panel: `pnpm --filter panel dev` (http://localhost:300
 | Pruebas del backend | `backend/` | `uv run pytest` |
 | Lint, formato y tipos del backend | `backend/` | `uv run ruff check . && uv run ruff format --check . && uv run mypy app tests` |
 | Backend en desarrollo | `backend/` | `uv run fastapi dev app/main.py` |
-| Mensaje de prueba de WhatsApp | `backend/` | `uv run python -m app.cli send-test-message --to +52...` |
+| Mensaje de prueba de WhatsApp (puerta de la Fase 0: `docs/puerta-fase-0.md`) | `backend/` | `uv run python -m app.cli send-test-message --to +52...` |
+| Buscar secretos en el historial | raíz | `docker run --rm -v "${PWD}:/repo" zricethezav/gitleaks:v8.30.1 git /repo --redact` |
 | Panel: lint, tipos y build | raíz | `pnpm panel:check` |
 
 ## Seguridad
@@ -60,3 +61,4 @@ En otra terminal, para el panel: `pnpm --filter panel dev` (http://localhost:300
 - Ningún `.env` se sube al repositorio. Los secretos van en los secretos de GitHub y del hosting.
 - Nunca uses datos reales de pacientes en desarrollo; el seed trae datos ficticios.
 - Fuera de producción solo se envían mensajes a los números de `WHATSAPP_ALLOWED_TEST_NUMBERS`.
+- `supabase/seed.sql` solo corre en la base local: si alguien lo aplica a la nube, se detiene sin hacer nada.

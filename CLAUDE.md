@@ -53,9 +53,9 @@ prompts/        prompts de arranque por fase (para Jared)
 - Base de datos (en la raíz, CLI de Supabase fijada en `package.json`): `pnpm db:start`, `pnpm db:reset` (migraciones y seed), `pnpm db:test` (pruebas pgTAP de RLS), `pnpm db:stop`. Cualquier otro comando: `pnpm supabase <comando>`.
 - Backend (en `backend/`): `uv run pytest` (unitarias e integración; necesita `pnpm db:start`), `uv run ruff check . && uv run ruff format --check .`, `uv run mypy app tests`.
 - Correr local: `uv run fastapi dev app/main.py` y, desde el hito 1B, en otra terminal `uv run python -m app.jobs.worker`.
-- Mensaje de prueba de WhatsApp: `uv run python -m app.cli send-test-message --to +52...` (solo a `WHATSAPP_ALLOWED_TEST_NUMBERS`).
+- Mensaje de prueba de WhatsApp: `uv run python -m app.cli send-test-message --to +52...` (solo a `WHATSAPP_ALLOWED_TEST_NUMBERS` y nunca en producción). La puerta completa de la Fase 0 está en `docs/puerta-fase-0.md`.
 - Panel: `pnpm panel:check` en la raíz, o en `panel/`: `pnpm lint && pnpm typecheck && pnpm build`.
-- Secretos: CI corre gitleaks sobre todo el historial; local: `gitleaks git . --redact`.
+- Secretos: CI corre gitleaks sobre todo el historial; local, con Docker: `docker run --rm -v "${PWD}:/repo" zricethezav/gitleaks:v8.30.1 git /repo --redact`.
 - Evaluaciones del bot: `uv run pytest tests/evals -m evals`. Llaman a la API real y cuestan: córrelas al cambiar el prompt, las herramientas o el orquestador, y antes de cada despliegue.
 
 Si un comando todavía no existe, créalo en la Fase 0 y actualiza esta lista.

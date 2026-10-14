@@ -1,6 +1,6 @@
 # 001 · Cimientos del repositorio (Fase 0)
 
-- **Estado:** aceptada
+- **Estado:** aceptada; los puntos marcados quedaron reemplazados por [002](002-endurecimiento-tras-revision.md)
 - **Fecha:** 2026-10-14
 
 ## Contexto
@@ -13,13 +13,13 @@ La Fase 0 deja listo el repositorio para construir la Fase 1 sin rehacer nada: m
 - Monorepo con `backend/` (uv), `panel/` (Next.js) y `supabase/`. La raíz es un workspace de pnpm con la CLI de Supabase fijada como dependencia de desarrollo (`pnpm db:*`), para que en Windows baste `pnpm install`. `.gitattributes` fija LF.
 
 **Base de datos**
-- El backend entra como `axon_app` (`LOGIN NOINHERIT NOBYPASSRLS`, no es dueño de nada, sin acceso al esquema `extensions`, con `statement_timeout` de 10 s e `idle_in_transaction_session_timeout` de 30 s). Su contraseña no vive en el repo: en local la pone el seed; en la nube, Jared con `alter role`.
+- El backend entra como `axon_app` (`LOGIN NOINHERIT NOBYPASSRLS`, no es dueño de nada, sin acceso al esquema `extensions`, con `statement_timeout` de 10 s e `idle_in_transaction_session_timeout` de 30 s). Su contraseña no vive en el repo: en local la pone el seed (que desde 002 se niega a correr fuera de local); en la nube, Jared con `alter role`.
 - Cada transacción empieza con `select set_config('app.clinic_id', $1, true)`, la forma parametrizada de `SET LOCAL`. Sin consultorio fijado, RLS no muestra nada.
 - **Llaves foráneas compuestas** `(clinic_id, x_id)` en todas las relaciones entre tablas de negocio: la base rechaza que una fila de A apunte a un paciente, dentista, servicio o conversación de B, aunque el código se equivoque.
 - `schedules`: una fila por dentista y día ISO (1 lunes … 7 domingo) con un descanso opcional y su margen entre citas. `schedule_exceptions` con `provider_id` nulo cierra todo el consultorio.
 - `events.type` con `check` de los tipos de la Fase 1; cada tipo nuevo llega con una migración. Borrar a un paciente (ARCO) deja el evento sin la cita, para no perder la cifra de dinero recuperado.
-- `webhook_events`: una fila por mensaje o estado, con `dedup_key` único por consultorio (`msg:<wamid>`, `status:<wamid>:<estado>`); lo demás para un número conocido se guarda completo como `other`.
-- Se revocan los permisos que Supabase da por defecto a `anon` y `authenticated`, también para tablas futuras (`alter default privileges`). El panel solo lee; `audit_log` y `webhook_events` no los lee.
+- `webhook_events`: una fila por mensaje o estado, con `dedup_key` único por consultorio (`msg:<wamid>`, `status:<wamid>:<estado>`); ~~lo demás para un número conocido se guarda completo como `other`~~ *(reemplazado por 002: solo el campo `messages` guarda contenido)*.
+- Se revocan los permisos que Supabase da por defecto a `anon` y `authenticated`, también para tablas futuras (`alter default privileges`). *(Para funciones, el revoke por esquema no bastaba: ver 002.)* El panel solo lee; `audit_log` y `webhook_events` no los lee.
 - Cola `whatsapp_inbound` en pgmq. La crea la Fase 0 para `/health`; el encolado y el worker llegan en 1B.
 
 **Conexión en la nube** (confirmado en la documentación de Supabase)
@@ -50,6 +50,6 @@ La Fase 0 deja listo el repositorio para construir la Fase 1 sin rehacer nada: m
 - Pendientes que no son de la Fase 0:
   - Enrutar los avisos de nivel de cuenta (estado de plantillas, calidad del número), en 1D.
   - Confirmar el nombre exacto del eco de coexistencia contra la documentación de Meta, en 1B.
-  - Límite de peticiones en `/api`, en 1A. En el webhook, la firma va primero y el límite por IP se pone en el hosting, porque Meta manda ráfagas legítimas.
+  - Límite de peticiones en `/api`, en 1A. ~~En el webhook, la firma va primero y el límite por IP se pone en el hosting~~ *(plazo y alternativas en 002)*.
   - Las plantillas propias de Axon (`alerta_equipo`, resumen y reporte) salen del número de Axon y viven en configuración, no en `templates`.
 - Windows nativo: psycopg async necesita el event loop *selector*; las pruebas lo fijan, y el worker de 1B también deberá hacerlo.

@@ -6,7 +6,7 @@ Propuesta de la Fase 0, **sin configurar**. Los hooks corren comandos de forma a
 
 **Qué evita:** que Claude edite una migración que ya corrió en staging o producción. La base de la nube no se enteraría del cambio y el repo diría otra cosa que la base.
 
-**Cómo:** un hook `PreToolUse` sobre `Edit|Write` que reciba la ruta del archivo y, si está en `supabase/migrations/` y ese archivo ya existe en `origin/main`, responda con código 2 y el mensaje "Crea una migración nueva con `pnpm supabase migration new <nombre>`".
+**Cómo:** un hook `PreToolUse` sobre `Edit|Write` que reciba la ruta del archivo y, si está en `supabase/migrations/` y ese archivo ya existe en la rama principal publicada (`origin/main` cuando exista; hoy el trabajo vive en ramas `claude/…`), responda con código 2 y el mensaje "Crea una migración nueva con `pnpm supabase migration new <nombre>`".
 
 ```json
 {
