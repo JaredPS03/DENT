@@ -1,0 +1,8 @@
+# Fines de línea LF en todo el repo, también en Windows: los scripts y SQL
+# corren en contenedores Linux y en CI.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary

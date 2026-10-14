@@ -1,0 +1,25 @@
+{
+  "name": "axon-dental",
+  "private": true,
+  "description": "Axon Dental: asistente de WhatsApp con IA para consultorios dentales",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "supabase": "supabase",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:reset": "supabase db reset",
+    "db:test": "supabase test db",
+    "panel:check": "pnpm --filter panel lint && pnpm --filter panel typecheck && pnpm --filter panel build"
+  },
+  "devDependencies": {
+    "supabase": "2.120.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "supabase"
+    ]
+  }
+}
