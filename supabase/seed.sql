@@ -11,16 +11,48 @@
 --                 7 conversation, 8 message, 9 consent, a appointment, b escalation, c event,
 --                 d template, e audit_log, f webhook_event
 
+-- Refuse to run anywhere but the local database of the Supabase CLI. `supabase db reset --linked`
+-- and `db push --include-seed` would apply this file to the cloud, with fake clinics and a public
+-- password for axon_app (a role that can fix any clinic and read its data). The CLI's local
+-- database carries its well-known development JWT secret; a cloud project never does.
+do $$
+begin
+  if coalesce(current_setting('app.settings.jwt_secret', true), '')
+       <> 'super-secret-jwt-token-with-at-least-32-characters-long' then
+    raise exception 'supabase/seed.sql es solo para la base local de la CLI de Supabase; aquí no se aplica nada.';
+  end if;
+end
+$$;
+
 -- Local-only password for the backend role. In the cloud it is set by hand and never committed.
 alter role axon_app with password 'axon_app_local';
 
--- Local time helper: day offset from today plus a wall-clock time in Mexico City.
-create function pg_temp.local_ts(p_days integer, p_time time) returns timestamptz
+-- Today in Mexico City: the seed may run at night, when the UTC date is already tomorrow.
+create function pg_temp.local_today() returns date
+  language sql stable
+  as $$ select (now() at time zone 'America/Mexico_City')::date $$;
+
+-- The n-th working day (Monday to Friday) after today, or before it when n is negative.
+-- Both clinics are open on those days, so seeded appointments always fall inside business
+-- hours, whatever day the seed runs.
+create function pg_temp.workday(p_n integer) returns date
   language sql stable
   as $$
-    select ((date_trunc('day', now() at time zone 'America/Mexico_City') + make_interval(days => p_days))::date + p_time)
-      at time zone 'America/Mexico_City'
+    select d::date
+    from generate_series(
+           (pg_temp.local_today() + sign(p_n)::integer)::timestamp,
+           (pg_temp.local_today() + sign(p_n)::integer * (abs(p_n) * 2 + 7))::timestamp,
+           make_interval(days => sign(p_n)::integer)
+         ) as d
+    where extract(isodow from d) between 1 and 5
+    offset abs(p_n) - 1
+    limit 1
   $$;
+
+-- Wall-clock time in Mexico City on the n-th working day.
+create function pg_temp.local_ts(p_workday integer, p_time time) returns timestamptz
+  language sql stable
+  as $$ select (pg_temp.workday(p_workday) + p_time) at time zone 'America/Mexico_City' $$;
 
 -- Panel users (Supabase Auth) -------------------------------------------------------
 
@@ -102,18 +134,18 @@ from generate_series(1, 6) as d;
 
 insert into public.schedule_exceptions (id, clinic_id, provider_id, starts_at, ends_at, reason) values
   ('a5000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', null,
-   pg_temp.local_ts(20, '00:00'), pg_temp.local_ts(21, '00:00'), 'Día festivo'),
+   pg_temp.local_ts(15, '00:00'), pg_temp.local_ts(15, '00:00') + interval '1 day', 'Día festivo'),
   ('b5000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000001', 'b2000000-0000-4000-8000-000000000001',
-   pg_temp.local_ts(10, '10:00'), pg_temp.local_ts(10, '14:00'), 'Congreso');
+   pg_temp.local_ts(8, '10:00'), pg_temp.local_ts(8, '14:00'), 'Congreso');
 
 -- Patients, conversations and messages -------------------------------------------------------
 -- Patient 3 of each clinic has no conversation yet.
 
 insert into public.patients (id, clinic_id, name, phone, last_visit_on, marketing_opt_in, source) values
-  ('a6000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'Ana Prueba', '+529510000101', current_date - 7, true, 'bot'),
+  ('a6000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'Ana Prueba', '+529510000101', pg_temp.workday(-5), true, 'bot'),
   ('a6000000-0000-4000-8000-000000000002', 'a0000000-0000-4000-8000-000000000001', 'Carlos Prueba', '+529510000102', null, false, 'bot'),
   ('a6000000-0000-4000-8000-000000000003', 'a0000000-0000-4000-8000-000000000001', null, '+529510000103', null, false, 'bot'),
-  ('b6000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000001', 'Beatriz Prueba', '+529510000201', current_date - 30, false, 'bot'),
+  ('b6000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000001', 'Beatriz Prueba', '+529510000201', pg_temp.local_today() - 30, false, 'bot'),
   ('b6000000-0000-4000-8000-000000000002', 'b0000000-0000-4000-8000-000000000001', 'Diego Prueba', '+529510000202', null, false, 'imported'),
   ('b6000000-0000-4000-8000-000000000003', 'b0000000-0000-4000-8000-000000000001', 'Elena Prueba', '+529510000203', null, false, 'imported');
 
@@ -165,7 +197,8 @@ insert into public.consents (id, clinic_id, patient_id, notice_version, accepted
   ('b9000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000001', 'b6000000-0000-4000-8000-000000000001',
    '2026-10', now() - interval '3 days', null);
 
--- Appointments: a confirmed one tomorrow, a pending one, an attended one and a cancelled one.
+-- Appointments on working days: a confirmed one on the next one, a pending one, one attended a
+-- week ago (the patient's last visit) and a cancelled one.
 
 insert into public.appointments (
   id, clinic_id, patient_id, service_id, provider_id, starts_at, ends_at, status, created_by, cancelled_at, cancellation_reason
@@ -178,7 +211,7 @@ insert into public.appointments (
    pg_temp.local_ts(2, '17:00'), pg_temp.local_ts(2, '17:30'), 'pending', 'human', null, null),
   ('aa000000-0000-4000-8000-000000000003', 'a0000000-0000-4000-8000-000000000001', 'a6000000-0000-4000-8000-000000000001',
    'a3000000-0000-4000-8000-000000000003', 'a2000000-0000-4000-8000-000000000001',
-   pg_temp.local_ts(-7, '11:00'), pg_temp.local_ts(-7, '12:00'), 'attended', 'bot', null, null),
+   pg_temp.local_ts(-5, '11:00'), pg_temp.local_ts(-5, '12:00'), 'attended', 'bot', null, null),
   ('ba000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000001', 'b6000000-0000-4000-8000-000000000001',
    'b3000000-0000-4000-8000-000000000001', 'b2000000-0000-4000-8000-000000000001',
    pg_temp.local_ts(1, '10:00'), pg_temp.local_ts(1, '10:40'), 'confirmed', 'bot', null, null),
@@ -203,7 +236,7 @@ insert into public.events (id, clinic_id, type, appointment_id, occurred_at, val
   ('ac000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'appointment_booked_after_hours',
    'aa000000-0000-4000-8000-000000000001', now() - interval '2 hours', null, '{"source": "bot"}'),
   ('ac000000-0000-4000-8000-000000000002', 'a0000000-0000-4000-8000-000000000001', 'appointment_attended',
-   'aa000000-0000-4000-8000-000000000003', pg_temp.local_ts(-7, '12:00'), 90000, '{}'),
+   'aa000000-0000-4000-8000-000000000003', pg_temp.local_ts(-5, '12:00'), 90000, '{}'),
   ('bc000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000001', 'appointment_confirmed',
    'ba000000-0000-4000-8000-000000000001', now() - interval '3 days', null, '{"source": "reminder"}'),
   ('bc000000-0000-4000-8000-000000000002', 'b0000000-0000-4000-8000-000000000001', 'appointment_cancelled',

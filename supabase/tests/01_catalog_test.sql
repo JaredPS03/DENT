@@ -3,7 +3,7 @@
 begin;
 \ir 00_helpers.psql
 
-select plan(28);
+select plan(32);
 
 -- The seed is not empty: isolation tests below would pass trivially on empty tables.
 select is(
@@ -157,6 +157,33 @@ select is(
   null,
   'axon_app puede encolar en whatsapp_inbound'
 );
+
+-- Functions created from now on are executable by nobody until granted explicitly.
+create function public.probe_new_function() returns integer language sql as $$ select 1 $$;
+create function private.probe_new_function() returns integer language sql as $$ select 1 $$;
+select ok(
+  not has_function_privilege('anon', 'public.probe_new_function()', 'EXECUTE')
+    and not has_function_privilege('authenticated', 'public.probe_new_function()', 'EXECUTE'),
+  'una función nueva en public no la ejecutan anon ni authenticated sin permiso explícito'
+);
+select ok(
+  not has_function_privilege('axon_app', 'private.probe_new_function()', 'EXECUTE'),
+  'una función nueva en private no la ejecuta nadie sin permiso explícito'
+);
+select ok(
+  exists (
+    select 1 from pg_default_acl d
+    where d.defaclrole = 'postgres'::regrole and d.defaclnamespace = 0 and d.defaclobjtype = 'f'
+  )
+  and not exists (
+    select 1 from pg_default_acl d, aclexplode(d.defaclacl) a
+    where d.defaclrole = 'postgres'::regrole and d.defaclnamespace = 0 and d.defaclobjtype = 'f'
+      and a.grantee = 0 and a.privilege_type = 'EXECUTE'
+  ),
+  'el permiso global por defecto de funciones existe y ya no incluye a PUBLIC'
+);
+select has_column('public', 'webhook_events', 'arrival_seq',
+  'webhook_events guarda el orden estricto de llegada');
 
 select * from finish();
 rollback;
