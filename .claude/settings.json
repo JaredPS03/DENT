@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(!.env.example)",
+      "Read(*.pem)",
+      "Read(*.key)",
+      "Bash(supabase db reset *--linked*)",
+      "Bash(supabase db reset *--db-url*)"
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "Bash(supabase db push *)",
+      "Bash(supabase link *)"
+    ]
+  }
+}
