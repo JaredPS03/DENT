@@ -35,4 +35,4 @@ Qué se gana, qué se pierde y qué hay que vigilar.
 
 | # | Decisión | Estado |
 | --- | --- | --- |
-| | | |
+| [001](001-cimientos.md) | Cimientos del repositorio: rol `axon_app`, RLS y llaves compuestas, webhook, CI y alertas | aceptada |

@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  database-and-backend:
+    name: Base de datos y backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Instalar la CLI de Supabase (fijada en package.json)
+        run: pnpm install --frozen-lockfile
+
+      - name: Levantar la base local
+        run: pnpm supabase db start
+      - name: supabase db reset (migraciones y seed desde cero)
+        run: pnpm db:reset
+      - name: supabase test db (pgTAP)
+        run: pnpm db:test
+
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - name: Instalar dependencias del backend
+        working-directory: backend
+        run: uv sync --locked
+      - name: Ruff
+        working-directory: backend
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: Mypy
+        working-directory: backend
+        run: uv run mypy app tests
+      - name: Pytest (unitarias e integración contra la base local)
+        working-directory: backend
+        run: uv run pytest
+      - name: Dependencias vulnerables (pip-audit)
+        working-directory: backend
+        run: |
+          uv export --format requirements-txt --locked --no-emit-project --quiet -o "$RUNNER_TEMP/requirements.txt"
+          uvx pip-audit --strict --disable-pip --require-hashes -r "$RUNNER_TEMP/requirements.txt"
+
+  panel:
+    name: Panel
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm --filter panel lint
+      - name: Typecheck
+        run: pnpm --filter panel typecheck
+      - name: Build
+        run: pnpm --filter panel build
+      - name: Dependencias vulnerables (las que se despliegan)
+        run: pnpm audit --prod --audit-level high
+
+  secrets:
+    name: Secretos (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: 8.30.1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Instalar gitleaks verificando su checksum
+        run: |
+          cd "$RUNNER_TEMP"
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          curl -sSfL -o gitleaks.tar.gz "$base/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o checksums.txt "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          grep "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" checksums.txt | sed "s/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz/gitleaks.tar.gz/" | sha256sum -c -
+          tar xzf gitleaks.tar.gz gitleaks
+      - name: Escanear todo el historial
+        run: $RUNNER_TEMP/gitleaks git . --redact --no-banner
