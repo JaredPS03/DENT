@@ -209,3 +209,41 @@ def test_account_level_changes_are_acknowledged(client: TestClient) -> None:
 @pytest.mark.parametrize("body", [b"{not json", b"[]", b'{"object": "page", "entry": []}'])
 def test_signed_but_unexpected_payload_is_answered_400(client: TestClient, body: bytes) -> None:
     assert client.post(URL, content=body, headers={"x-hub-signature-256": sign(body)}).status_code == 400
+
+
+def test_a_nul_character_never_loses_the_message_nor_its_neighbours(
+    client: TestClient, database_url: str, wamid: str
+) -> None:
+    odd = message_change(PHONE_NUMBER_ID_A, wamid, text="me sangra la encía\x00")
+    neighbour = message_change(PHONE_NUMBER_ID_A, wamid + ".2", text="¿tienen cita mañana?")
+    assert _post(client, webhook_payload(odd, neighbour)) == 200
+
+    stored = _events(database_url, CLINIC_A, wamid)
+    assert stored[0][4]["messages"][0]["text"]["body"] == "me sangra la encía\ufffd"
+    assert len(_events(database_url, CLINIC_A, wamid + ".2")) == 1
+
+
+def test_a_lone_surrogate_never_loses_the_message(client: TestClient, database_url: str, wamid: str) -> None:
+    assert _post(client, webhook_payload(message_change(PHONE_NUMBER_ID_A, wamid, text="hola \ud83d"))) == 200
+    assert _events(database_url, CLINIC_A, wamid)[0][4]["messages"][0]["text"]["body"] == "hola \ufffd"
+
+
+def test_unknown_fields_are_recorded_without_their_content(client: TestClient, database_url: str) -> None:
+    marker = uuid4().hex
+    change = {
+        "field": "history",
+        "value": {
+            "metadata": {"display_phone_number": "529510000001", "phone_number_id": PHONE_NUMBER_ID_A},
+            "contacts": [{"wa_id": "529510000555", "profile": {"name": f"Tía Lupe {marker}"}}],
+        },
+    }
+    assert _post(client, webhook_payload(change)) == 200
+
+    rows = rows_as_clinic(
+        database_url,
+        CLINIC_A,
+        "select kind, payload, payload_purged_at is not null from public.webhook_events"
+        " where field = 'history' and created_at > now() - interval '1 minute'",
+    )
+    assert ("other", None, True) in rows
+    assert marker not in str(rows)

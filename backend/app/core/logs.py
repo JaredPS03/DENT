@@ -46,11 +46,21 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str, ensure_ascii=False)
 
 
+# Servers configure these loggers with their own plain-text handlers before importing the app.
+# "uvicorn.error" logs unhandled exceptions with their full message ("Exception in ASGI
+# application"), which can quote patient data, so they must go through JsonFormatter too.
+_SERVER_LOGGERS = ("uvicorn", "uvicorn.error", "fastapi")
+
+
 def configure_logging(level: str = "INFO") -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
     root = logging.getLogger()
     root.handlers[:] = [handler]
     root.setLevel(level)
+    for name in _SERVER_LOGGERS:
+        server_logger = logging.getLogger(name)
+        server_logger.handlers.clear()
+        server_logger.propagate = True
     # Access logs would print full URLs and client addresses; requests are logged by the app instead.
     logging.getLogger("uvicorn.access").disabled = True

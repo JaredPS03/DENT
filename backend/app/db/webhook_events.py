@@ -25,13 +25,24 @@ async def insert_webhook_items(conn: AsyncConnection, clinic_id: UUID, items: It
     """
     inserted = 0
     for item in items:
+        # Items without content are a trace only: the row is born already purged.
+        has_content = item.payload is not None
         cursor = await conn.execute(
             """
-            insert into public.webhook_events (clinic_id, field, kind, meta_id, dedup_key, payload)
-            values (%s, %s, %s, %s, %s, %s)
+            insert into public.webhook_events
+              (clinic_id, field, kind, meta_id, dedup_key, payload, payload_purged_at)
+            values (%s, %s, %s, %s, %s, %s, case when %s then null else now() end)
             on conflict (clinic_id, dedup_key) do nothing
             """,
-            (clinic_id, item.field, item.kind, item.meta_id, item.dedup_key, Jsonb(item.payload)),
+            (
+                clinic_id,
+                item.field,
+                item.kind,
+                item.meta_id,
+                item.dedup_key,
+                Jsonb(item.payload) if has_content else None,
+                has_content,
+            ),
         )
         inserted += cursor.rowcount
     return inserted

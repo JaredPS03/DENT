@@ -1,8 +1,16 @@
+import json
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
-from app.whatsapp.payloads import split_payload
+from app.whatsapp.payloads import WebhookItem, split_payload
 from tests.conftest import message_change, status_change, webhook_payload
+
+
+def _content(item: WebhookItem) -> dict[str, Any]:
+    assert item.payload is not None
+    return item.payload
 
 
 def test_a_text_message_becomes_one_item_with_its_original_json() -> None:
@@ -19,9 +27,9 @@ def test_a_text_message_becomes_one_item_with_its_original_json() -> None:
         "wamid.A1",
     )
     assert item.dedup_key == "msg:wamid.A1"
-    assert item.payload["messages"][0]["text"] == {"body": "Hola"}
-    assert item.payload["metadata"]["phone_number_id"] == "111"
-    assert item.payload["contacts"][0]["wa_id"] == "529510000101"
+    assert _content(item)["messages"][0]["text"] == {"body": "Hola"}
+    assert _content(item)["metadata"]["phone_number_id"] == "111"
+    assert _content(item)["contacts"][0]["wa_id"] == "529510000101"
 
 
 def test_each_status_of_a_message_is_its_own_item() -> None:
@@ -57,7 +65,7 @@ def test_a_batch_with_several_messages_keeps_each_one_alone() -> None:
     second = dict(change["value"]["messages"][0], id="wamid.2")
     change["value"]["messages"].append(second)
     items, _ = split_payload(webhook_payload(change))
-    assert [i.payload["messages"][0]["id"] for i in items] == ["wamid.1", "wamid.2"]
+    assert [_content(i)["messages"][0]["id"] for i in items] == ["wamid.1", "wamid.2"]
 
 
 def test_account_level_changes_without_number_are_reported_not_routed() -> None:
@@ -73,17 +81,44 @@ def test_account_level_changes_without_number_are_reported_not_routed() -> None:
     assert [(u.entry_id, u.field) for u in unroutable] == [("waba-9", "message_template_status_update")]
 
 
-def test_unknown_change_for_a_known_number_is_kept_whole() -> None:
+def test_unknown_change_for_a_known_number_is_a_trace_without_content() -> None:
     change = {"field": "something_new", "value": {"metadata": {"phone_number_id": "111"}, "data": [1, 2]}}
     items, _ = split_payload(webhook_payload(change))
     assert len(items) == 1
     assert items[0].kind == "other"
     assert items[0].meta_id is None
     assert items[0].dedup_key.startswith("other:something_new:")
-    assert items[0].payload == change["value"]
+    assert items[0].payload is None
     # Same content, same key: a retry is deduplicated.
     again, _ = split_payload(webhook_payload(change))
     assert again[0].dedup_key == items[0].dedup_key
+
+
+def test_only_the_messages_field_keeps_content() -> None:
+    # A contact or history sync could carry people who are not patients; it is never stored.
+    change = {
+        "field": "history",
+        "value": {
+            "metadata": {"phone_number_id": "111"},
+            "messages": [{"id": "wamid.H1", "from": "529510000555", "text": {"body": "hola tía"}}],
+            "contacts": [{"wa_id": "529510000555", "profile": {"name": "Tía Lupe"}}],
+        },
+    }
+    items, _ = split_payload(webhook_payload(change))
+    assert [(i.kind, i.payload) for i in items] == [("other", None)]
+
+
+def test_text_postgres_cannot_store_is_replaced_and_the_rest_kept() -> None:
+    change = message_change("111", "wamid.N1", text="me sangra la encía\x00 ¿tienen cita? \ud83d")
+    change["value"]["contacts"][0]["profile"]["name"] = "Ana\x00"
+    change["value"]["messages"][0]["extra\x00key"] = "x"
+    items, _ = split_payload(webhook_payload(change))
+
+    message = _content(items[0])["messages"][0]
+    assert message["text"]["body"] == "me sangra la encía\ufffd ¿tienen cita? \ufffd"
+    assert "extra\ufffdkey" in message
+    assert _content(items[0])["contacts"][0]["profile"]["name"] == "Ana\ufffd"
+    json.dumps(_content(items[0])).encode("utf-8")  # encodable: Postgres will accept it
 
 
 @pytest.mark.parametrize(

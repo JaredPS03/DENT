@@ -1,8 +1,9 @@
 """Models of Meta's WhatsApp webhook payload and how it is split into storable items.
 
 The models are strict on the fields Axon reads and tolerant of anything else, because Meta
-adds fields over time. The stored payload is the original JSON of each item, not the model,
-so nothing Meta sent is lost for reprocessing.
+adds fields over time. For messages and statuses the stored payload is the original JSON of
+each item, not the model, so it can be reprocessed. Text Postgres cannot store (NUL characters,
+lone surrogates) is replaced first: one odd character must never lose a patient's message.
 
 One webhook can carry several entries and changes, even for different clinics: each item is
 routed on its own by `metadata.phone_number_id`. Account-level changes (template status,
@@ -11,9 +12,11 @@ number quality) carry no phone number id; milestone 1D decides how to route them
 Confirmed field names (Meta's official sample app fbsamples/whatsapp-business-jaspers-market and
 the official Node SDK): object, entry[].id, entry[].changes[].field and .value,
 value.metadata.phone_number_id, value.messages[].id, value.statuses[].id and .status.
-Anything else for a known number (for example coexistence echoes, whose exact field name is
-still to be confirmed against Meta's documentation in milestone 1B) is stored whole as 'other',
-so nothing is lost.
+Only the `messages` field keeps its content. Any other change for a known number (coexistence
+echoes, history or contact sync, fields Meta adds later) is recorded as 'other' WITHOUT its
+content: the spec says to store only what it asks for, and a contact sync would bring people
+who are not patients. A field joins the list once it is confirmed in Meta's documentation and
+something processes it (coexistence echoes, milestone 1B).
 """
 
 import hashlib
@@ -72,7 +75,8 @@ class WebhookItem:
     kind: ItemKind
     meta_id: str | None
     dedup_key: str
-    payload: dict[str, Any]
+    # None: recorded as a trace only, content never stored.
+    payload: dict[str, Any] | None
 
 
 @dataclass(frozen=True)
@@ -83,10 +87,36 @@ class UnroutableChange:
     field: str
 
 
+# The only webhook field whose content is stored, and the lists it carries.
+CONTENT_FIELD = "messages"
 _ITEM_LISTS: tuple[tuple[str, ItemKind], ...] = (
     ("messages", "message"),
     ("statuses", "status"),
 )
+
+REPLACEMENT_CHARACTER = "\ufffd"
+
+
+def _clean_text(text: str) -> str:
+    if "\x00" in text:
+        text = text.replace("\x00", REPLACEMENT_CHARACTER)
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        # Lone surrogates ("\ud83d" without its pair) are valid JSON but not valid UTF-8.
+        text = "".join(REPLACEMENT_CHARACTER if 0xD800 <= ord(char) <= 0xDFFF else char for char in text)
+    return text
+
+
+def clean_for_postgres(value: Any) -> Any:
+    """Replaces, in every key and string, what Postgres text and jsonb reject."""
+    if isinstance(value, str):
+        return _clean_text(value)
+    if isinstance(value, dict):
+        return {_clean_text(str(k)): clean_for_postgres(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [clean_for_postgres(v) for v in value]
+    return value
 
 
 def split_payload(raw: dict[str, Any]) -> tuple[list[WebhookItem], list[UnroutableChange]]:
@@ -94,6 +124,7 @@ def split_payload(raw: dict[str, Any]) -> tuple[list[WebhookItem], list[Unroutab
 
     Raises pydantic.ValidationError when the payload is not a WhatsApp webhook.
     """
+    raw = clean_for_postgres(raw)
     payload = WebhookPayload.model_validate(raw)
     items: list[WebhookItem] = []
     unroutable: list[UnroutableChange] = []
@@ -108,7 +139,7 @@ def split_payload(raw: dict[str, Any]) -> tuple[list[WebhookItem], list[Unroutab
             common = {k: v for k, v in raw_value.items() if k not in {name for name, _ in _ITEM_LISTS}}
 
             found = False
-            for list_name, kind in _ITEM_LISTS:
+            for list_name, kind in _ITEM_LISTS if change.field == CONTENT_FIELD else ():
                 parsed_list = getattr(change.value, list_name)
                 for position, parsed in enumerate(parsed_list):
                     found = True
@@ -129,8 +160,7 @@ def split_payload(raw: dict[str, Any]) -> tuple[list[WebhookItem], list[Unroutab
                     )
 
             if not found:
-                # A change for this number that is neither a message nor a status:
-                # kept whole, deduplicated by its content.
+                # Not a message nor a status: only a trace (field and a digest for deduplication).
                 digest = hashlib.sha256(
                     json.dumps(raw_value, sort_keys=True, separators=(",", ":")).encode()
                 ).hexdigest()
@@ -141,7 +171,7 @@ def split_payload(raw: dict[str, Any]) -> tuple[list[WebhookItem], list[Unroutab
                         kind="other",
                         meta_id=None,
                         dedup_key=f"other:{change.field}:{digest}",
-                        payload=raw_value,
+                        payload=None,
                     )
                 )
 
