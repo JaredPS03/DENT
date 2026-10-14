@@ -33,7 +33,7 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
   - Backend: `uv run pytest` da **88 passed** (unitarias e integración contra la base local, incluido un proxy que congela la red). `ruff check`, `ruff format --check` y `mypy app tests` limpios.
   - Panel: `pnpm panel:check` (lint, typecheck y build) en verde.
   - `gitleaks git .`: sin hallazgos en todo el historial. `pip-audit` y `pnpm audit --prod`: sin vulnerabilidades conocidas.
-  - CI en GitHub: [run 1](https://github.com/JaredPS03/DENT/actions/runs/38513426600) en verde (base y backend, panel y secretos).
+  - CI en GitHub en verde en sus tres jobs (base y backend, panel y secretos): [run 1](https://github.com/JaredPS03/DENT/actions/runs/38513426600) y, con todas las correcciones, [run 3](https://github.com/JaredPS03/DENT/actions/runs/38608098324).
   - Prueba real con `fastapi run`:
     - `/health` 200 y verificación de Meta 200.
     - Aviso firmado guardado en 7 ms; sin firma, 401.
