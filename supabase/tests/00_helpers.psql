@@ -1,0 +1,89 @@
+-- Shared helpers for the pgTAP tests. Every test file includes it with \ir, inside its own
+-- transaction, so the helpers live in pg_temp and disappear with the rollback.
+--
+-- Statements under test run as the role being tested (axon_app, authenticated, anon), while
+-- the pgTAP assertions run as the test owner: axon_app has no access to the extensions
+-- schema where pgTAP lives, on purpose.
+
+create extension if not exists pgtap with schema extensions;
+
+-- Since PostgreSQL 16 the creator of a role cannot assume it unless granted explicitly.
+-- Granted only inside this test transaction, which is rolled back.
+grant axon_app to postgres with set true, inherit false;
+
+-- Fixed ids from supabase/seed.sql.
+create function pg_temp.clinic_a() returns uuid language sql immutable
+  as $$ select 'a0000000-0000-4000-8000-000000000001'::uuid $$;
+create function pg_temp.clinic_b() returns uuid language sql immutable
+  as $$ select 'b0000000-0000-4000-8000-000000000001'::uuid $$;
+create function pg_temp.owner_a() returns uuid language sql immutable
+  as $$ select 'a1000000-0000-4000-8000-000000000001'::uuid $$;
+
+-- Every business table of the data model.
+create function pg_temp.business_tables() returns text[] language sql immutable
+  as $$ select array[
+    'clinics', 'clinic_users', 'providers', 'services', 'schedules', 'schedule_exceptions',
+    'patients', 'conversations', 'messages', 'consents', 'appointments', 'escalations',
+    'events', 'templates', 'audit_log', 'webhook_events'
+  ] $$;
+
+-- Tables the panel reads directly.
+create function pg_temp.panel_tables() returns text[] language sql immutable
+  as $$ select array_remove(array_remove(pg_temp.business_tables(), 'audit_log'), 'webhook_events') $$;
+
+-- Column that holds the clinic of each row.
+create function pg_temp.clinic_column(p_table text) returns text language sql immutable
+  as $$ select case when p_table = 'clinics' then 'id' else 'clinic_id' end $$;
+
+-- Runs one statement as p_role and reports what happened instead of raising:
+--   state = SQLSTATE of the error, or null when it succeeded;
+--   n     = the single value of a select, or the affected row count of a write.
+-- p_clinic fixes app.clinic_id (backend); p_user sets the JWT subject (panel).
+create function pg_temp.run_as(
+  p_role text,
+  p_sql text,
+  p_clinic uuid default null,
+  p_user uuid default null,
+  out state text,
+  out n bigint
+) language plpgsql as $$
+begin
+  if p_clinic is not null then
+    perform set_config('app.clinic_id', p_clinic::text, true);
+  end if;
+  if p_user is not null then
+    perform set_config('request.jwt.claims',
+      json_build_object('sub', p_user, 'role', 'authenticated')::text, true);
+  end if;
+
+  execute format('set local role %I', p_role);
+  begin
+    if p_sql ~* '^\s*select' then
+      execute p_sql into n;
+    else
+      execute p_sql;
+      get diagnostics n = row_count;
+    end if;
+  exception when others then
+    state := sqlstate;
+    n := null;
+  end;
+  execute 'reset role';
+end
+$$;
+
+-- Fingerprint of every row of one clinic in one table, read as the test owner (bypasses RLS).
+create function pg_temp.fingerprint(p_table text, p_clinic uuid) returns text language plpgsql as $$
+declare
+  result text;
+begin
+  execute format(
+    'select md5(coalesce(string_agg(t::text, %L order by t::text), %L)) from public.%I t where %I = %L',
+    ',', '', p_table, pg_temp.clinic_column(p_table), p_clinic
+  ) into result;
+  return result;
+end
+$$;
+
+create function pg_temp.count_sql(p_table text, p_clinic uuid) returns text language sql immutable
+  as $$ select format('select count(*) from public.%I where %I = %L', p_table, pg_temp.clinic_column(p_table), p_clinic) $$;
