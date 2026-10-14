@@ -1,0 +1,60 @@
+[project]
+name = "axon-backend"
+version = "0.1.0"
+description = "Backend de Axon Dental: webhooks de WhatsApp, API del panel y worker"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi[standard]>=0.143.0",
+    "httpx>=0.28.1",
+    "psycopg-pool>=3.3.3",
+    "psycopg[binary]>=3.3.6",
+    "pydantic-settings>=2.15.0",
+    "sentry-sdk>=2.72.0",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.0",
+    "pytest>=9.1.1",
+    "ruff>=0.17.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+  "E", "W", "F", "I", "B", "UP", "S", "ASYNC", "RUF", "SIM", "PT", "N", "C4", "DTZ", "T20", "PL", "TRY",
+]
+ignore = [
+  "TRY003",   # mensajes de error descriptivos en el raise
+  "PLR2004",  # números en comparaciones de pruebas y límites con nombre propio
+  "RUF001", "RUF002", "RUF003",  # textos en español con acentos
+]
+
+[tool.ruff.lint.per-file-ignores]
+"app/cli.py" = ["T201"]  # el comando le habla a la terminal
+"tests/**" = ["S101", "S105", "S106", "PLR0913", "S311"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_decorators = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-m", "not evals", "--strict-markers", "-ra"]
+markers = [
+  "evals: evaluaciones del bot contra la API real de Claude; cuestan dinero, córrelas a propósito",
+  "integration: necesitan la base local de Supabase (pnpm db:start en la raíz)",
+]
+filterwarnings = ["error::pytest.PytestUnraisableExceptionWarning"]

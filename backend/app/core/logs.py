@@ -1,0 +1,56 @@
+"""Structured JSON logs that carry ids only.
+
+Never log message content, names, transcriptions or full phone numbers. Exception messages
+are left out as well, because database errors quote the offending values
+(for example `Key (phone)=(+52...) already exists`).
+"""
+
+import json
+import logging
+import sys
+import traceback
+from datetime import UTC, datetime
+from typing import Any
+
+# Attributes every LogRecord has; anything else came through `extra=` and is logged as a field.
+_STANDARD_ATTRS = frozenset(
+    logging.LogRecord("", 0, "", 0, "", None, None).__dict__.keys() | {"message", "asctime", "taskName"}
+)
+
+
+def mask_phone(phone: str | None) -> str:
+    """Keeps only the last 4 digits: '+529511234567' -> '***4567'."""
+    if not phone:
+        return "***"
+    digits = "".join(char for char in phone if char.isdigit())
+    return f"***{digits[-4:]}" if len(digits) >= 4 else "***"
+
+
+class JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict[str, Any] = {
+            "ts": datetime.fromtimestamp(record.created, UTC).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "event": record.getMessage(),
+        }
+        for key, value in record.__dict__.items():
+            if key not in _STANDARD_ATTRS and not key.startswith("_"):
+                payload[key] = value
+        if record.exc_info and record.exc_info[0] is not None:
+            payload["exc_type"] = record.exc_info[0].__name__
+            frames = traceback.extract_tb(record.exc_info[2])
+            if frames:
+                last = frames[-1]
+                payload["exc_where"] = f"{last.filename}:{last.lineno} in {last.name}"
+        return json.dumps(payload, default=str, ensure_ascii=False)
+
+
+def configure_logging(level: str = "INFO") -> None:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JsonFormatter())
+    root = logging.getLogger()
+    root.handlers[:] = [handler]
+    root.setLevel(level)
+    # Access logs would print full URLs and client addresses; requests are logged by the app instead.
+    logging.getLogger("uvicorn.access").disabled = True
