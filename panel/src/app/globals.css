@@ -1,0 +1,9 @@
+@import "tailwindcss";
+
+/* Axon brand (.claude/rules/panel.md). The Lexend font arrives with the screens in milestone 1E. */
+@theme {
+  --color-axon-night: #0b1736;
+  --color-axon-electric: #2e6bff;
+  --color-axon-mist: #eef1f6;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
