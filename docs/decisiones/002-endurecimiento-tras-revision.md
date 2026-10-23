@@ -1,6 +1,6 @@
 # 002 · Endurecimiento de la Fase 0 tras la revisión de seguridad
 
-- **Estado:** aceptada
+- **Estado:** aceptada; los puntos marcados quedaron reemplazados por [003](003-revision-de-cierre.md)
 - **Fecha:** 2026-10-14
 
 ## Contexto
@@ -27,11 +27,11 @@ Todos los hallazgos confirmados se reprodujeron contra el código o la base loca
 **Permisos**
 - **`axon_app` solo actualiza las columnas de configuración de `clinics`.** Enrutamiento (`whatsapp_phone_number_id`, `waba_id`, número visible), `plan`, topes y `active` son de las tareas de administración de Axon. Lo hace la migración `restrict_clinic_updates`.
 - **Funciones nuevas sin `EXECUTE` para PUBLIC, de forma global.** PostgreSQL no permite quitar ese permiso por esquema, así que el revoke de la 001 no hacía nada.
-- **`supabase/seed.sql` se niega a correr fuera de la base local de la CLI.** La reconoce por su secreto JWT público de desarrollo, que un proyecto en la nube nunca tiene. `supabase db reset --linked` y `db push --include-seed` lo aplicarían a la nube con datos falsos y la contraseña pública de `axon_app`.
-- **`.claude/settings.json` cubre también las formas con `pnpm`** (`pnpm db:reset --linked`, `pnpm supabase db push`, etc.). Las reglas del kit solo cubrían `supabase …`.
+- **`supabase/seed.sql` se niega a correr fuera de la base local de la CLI.** La reconoce por su secreto JWT público de desarrollo, que un proyecto en la nube nunca tiene. `supabase db reset --linked` y `db push --include-seed` lo aplicarían a la nube con datos falsos y la contraseña pública de `axon_app`. *(Con `psql -f` la guarda no detenía el resto del archivo; desde la 003 el seed es una sola transacción.)*
+- **`.claude/settings.json` cubre también las formas con `pnpm`** (`pnpm db:reset --linked`, `pnpm supabase db push`, etc.). Las reglas del kit solo cubrían `supabase …`. *(No todas las formas: la 003 usa comodines y aclara que es una barrera, no una garantía.)*
 
 **Configuración**
-- **Secretos de Meta con 8 caracteres o más.** Fuera de desarrollo, `DATABASE_URL` debe llevar `sslmode=require` (o `verify-ca`/`verify-full`). El error de arranque explica qué falta sin mostrar valores ni longitudes.
+- **Secretos de Meta con 8 caracteres o más.** Fuera de desarrollo, `DATABASE_URL` debe llevar `sslmode=require` (o `verify-ca`/`verify-full`). El error de arranque explica qué falta sin mostrar valores ni longitudes. *(`urlsplit` sí podía citar la contraseña y leía `sslmode` distinto que libpq: ver 003.)*
 - **`send-test-message` no corre en producción.** Ahí todo mensaje sale por el bot, que lo registra y lo cuenta contra el tope.
 
 **Tiempos**

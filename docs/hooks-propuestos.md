@@ -45,6 +45,32 @@ Solo toca el archivo editado, así que es rápido.
 
 **Cómo:** un hook `Stop` que, si hay cambios en `backend/`, `supabase/` o `panel/` y `docs/avance.md` no cambió en la rama, imprima un recordatorio. Solo avisa; no bloquea.
 
+## 5. Bloquear comandos contra la base de la nube
+
+**Qué evita:** que Claude resetee la base de la nube o le aplique migraciones. Las reglas de `settings.json` comparan el texto del comando con patrones, y siempre hay otra forma de escribirlo: `pnpm run`, banderas antes del subcomando, `node_modules/.bin/supabase`. Importa desde el hito 1F, cuando enlaces staging.
+
+**Cómo:** un hook `PreToolUse` sobre `Bash` que lea `tool_input.command` y responda con código 2 cuando el comando junte las dos cosas:
+
+- una operación sobre la base: `db reset`, `db:reset`, `db push`, `migration up` o `migration repair`;
+- un destino en la nube: `--linked`, `--db-url`, `--project-ref` o `SUPABASE_YES`.
+
+El mensaje: "Las migraciones a la nube se aplican desde CI".
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "uv run --project backend python scripts/hooks/bloquear_nube.py" }]
+      }
+    ]
+  }
+}
+```
+
+No reemplaza lo importante: aplicar las migraciones desde CI con aprobación y no dejar la computadora enlazada a la nube (`supabase logout`) mientras Claude trabaja en modo bypass.
+
 ## Que no recomiendo
 
 - **Correr todas las pruebas en cada edición:** pgTAP y la integración tardan; mejor al cerrar cada tarea, como ya pide `CLAUDE.md`.

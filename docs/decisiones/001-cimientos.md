@@ -52,4 +52,4 @@ La Fase 0 deja listo el repositorio para construir la Fase 1 sin rehacer nada: m
   - Confirmar el nombre exacto del eco de coexistencia contra la documentación de Meta, en 1B.
   - Límite de peticiones en `/api`, en 1A. ~~En el webhook, la firma va primero y el límite por IP se pone en el hosting~~ *(plazo y alternativas en 002)*.
   - Las plantillas propias de Axon (`alerta_equipo`, resumen y reporte) salen del número de Axon y viven en configuración, no en `templates`.
-- Windows nativo: psycopg async necesita el event loop *selector*; las pruebas lo fijan, y el worker de 1B también deberá hacerlo.
+- Windows nativo: psycopg async necesita el event loop *selector*; las pruebas lo fijan, y el worker de 1B también deberá hacerlo. *(Y el backend se corre con `fastapi dev`: ver 003.)*

@@ -24,7 +24,7 @@ prompts/    prompts de arranque por fase
 - **uv**, que instala Python 3.12 solo.
 - **Git.**
 
-En Windows todo funciona desde PowerShell, pero lo más estable es clonar y trabajar dentro de WSL2 (Ubuntu): Docker, uv y pnpm corren ahí sin diferencias con el CI.
+En Windows funciona desde PowerShell, con una excepción: el backend se corre con `fastapi dev`, no con `fastapi run`. Sin recarga, uvicorn usa en Windows un event loop que psycopg no soporta, y el backend no llega a la base. Lo más estable es clonar y trabajar dentro de WSL2 (Ubuntu): Docker, uv y pnpm corren ahí sin diferencias con el CI.
 
 ## Primeros pasos
 
@@ -58,7 +58,7 @@ En otra terminal, para el panel: `pnpm --filter panel dev` (http://localhost:300
 
 ## Seguridad
 
-- Ningún `.env` se sube al repositorio. Los secretos van en los secretos de GitHub y del hosting.
+- Ningún `.env` se sube al repositorio, ni sus copias (`.env - copia`, `produccion.env`). Los secretos van en los secretos de GitHub y del hosting.
 - Nunca uses datos reales de pacientes en desarrollo; el seed trae datos ficticios.
 - Fuera de producción solo se envían mensajes a los números de `WHATSAPP_ALLOWED_TEST_NUMBERS`.
-- `supabase/seed.sql` solo corre en la base local: si alguien lo aplica a la nube, se detiene sin hacer nada.
+- `supabase/seed.sql` solo corre en la base local. Es una sola transacción: si alguien lo aplica a la nube (con la CLI, Studio o `psql`), su guarda falla y no se aplica nada.

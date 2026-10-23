@@ -36,4 +36,5 @@ Qué se gana, qué se pierde y qué hay que vigilar.
 | # | Decisión | Estado |
 | --- | --- | --- |
 | [001](001-cimientos.md) | Cimientos del repositorio: rol `axon_app`, RLS y llaves compuestas, webhook, CI y alertas | aceptada; en parte reemplazada por 002 |
-| [002](002-endurecimiento-tras-revision.md) | Endurecimiento tras la revisión de seguridad: contenido mínimo, permisos, seed solo local, plazos, orden de llegada y CI | aceptada |
+| [002](002-endurecimiento-tras-revision.md) | Endurecimiento tras la revisión de seguridad: contenido mínimo, permisos, seed solo local, plazos, orden de llegada y CI | aceptada; en parte reemplazada por 003 |
+| [003](003-revision-de-cierre.md) | Revisión de cierre de la Fase 0: seed atómico, `DATABASE_URL` con libpq, logs de asyncio, copias de `.env`, permisos y la puerta con el número de Axon | aceptada |
