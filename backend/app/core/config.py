@@ -1,18 +1,20 @@
 """Backend settings, read from environment variables (or backend/.env in development).
 
 The app refuses to start when a required variable is missing or invalid. The error names the
-variables but never shows their values: Pydantic's own errors echo every input value,
-secrets included, so they are replaced by SettingsError.
+variables but never shows their values: Pydantic's own errors, and those of the parsers our
+validators call, echo the input, secrets included, so they are replaced by SettingsError. Only
+text written in this module (raised with `_problem`) is shown.
 """
 
 import re
 from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated, Literal
-from urllib.parse import parse_qs, urlsplit
 
+import psycopg
+from psycopg.conninfo import conninfo_to_dict
 from pydantic import Field, SecretStr, ValidationError, ValidationInfo, field_validator
-from pydantic_core import ErrorDetails
+from pydantic_core import ErrorDetails, PydanticCustomError
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 E164_PATTERN = re.compile(r"^\+[1-9][0-9]{7,14}$")
@@ -20,6 +22,16 @@ E164_PATTERN = re.compile(r"^\+[1-9][0-9]{7,14}$")
 TLS_SSLMODES = frozenset({"require", "verify-ca", "verify-full"})
 # An empty or trivial secret would make the webhook reject everything, or accept a guessable token.
 MIN_SECRET_LENGTH = 8
+# A port, or one per host: "5432" or "5432,6543".
+PORT_PATTERN = re.compile(r"^[0-9]+(,[0-9]+)*$")
+MALFORMED_DATABASE_URL = "it is not a valid Postgres URL; percent-encode special characters in the password"
+# Error type of the problems described in this module's own words.
+_OWN_PROBLEM = "axon_config"
+
+
+def _problem(message: str) -> PydanticCustomError:
+    """A configuration problem in our own words: the only error text SettingsError shows."""
+    return PydanticCustomError(_OWN_PROBLEM, message)
 
 
 class Environment(StrEnum):
@@ -66,12 +78,20 @@ class Settings(BaseSettings):
 
     @field_validator("database_url")
     @classmethod
-    def _require_tls_outside_development(cls, value: SecretStr, info: ValidationInfo) -> SecretStr:
-        if info.data.get("environment") in (None, Environment.DEVELOPMENT):
-            return value
-        query = parse_qs(urlsplit(value.get_secret_value()).query)
-        if (query.get("sslmode") or [""])[-1] not in TLS_SSLMODES:
-            raise ValueError("outside development it needs sslmode=require (or verify-ca / verify-full)")
+    def _validate_database_url(cls, value: SecretStr, info: ValidationInfo) -> SecretStr:
+        # Read with libpq's own parser, so the check sees exactly what the pool will use. Its
+        # errors quote the URL, password included: a malformed URL that reached the pool would
+        # be logged on every connection attempt.
+        try:
+            params = conninfo_to_dict(value.get_secret_value())
+        except psycopg.Error:
+            raise _problem(MALFORMED_DATABASE_URL) from None
+        # An unencoded / in the password makes libpq read its first part as the port.
+        if params.get("port") is not None and not PORT_PATTERN.fullmatch(str(params["port"])):
+            raise _problem(MALFORMED_DATABASE_URL)
+        environment = info.data.get("environment")
+        if environment not in (None, Environment.DEVELOPMENT) and params.get("sslmode") not in TLS_SSLMODES:
+            raise _problem("outside development it needs sslmode=require (or verify-ca / verify-full)")
         return value
 
     @field_validator("whatsapp_allowed_test_numbers", mode="before")
@@ -87,7 +107,7 @@ class Settings(BaseSettings):
         for number in value:
             if not E164_PATTERN.fullmatch(number):
                 # The number itself is not echoed back.
-                raise ValueError("every number must be in E.164 format, for example +5295...")
+                raise _problem("every number must be in E.164 format, for example +5295...")
         return value
 
     @field_validator("whatsapp_test_phone_number_id", mode="before")
@@ -114,10 +134,10 @@ def _describe(error: ErrorDetails) -> str:
     name = ".".join(str(part) for part in error["loc"]).upper()
     if error["type"] == "missing":
         return f"{name} (falta)"
-    if error["type"] == "value_error":
-        # Our own validators' text never contains the value.
-        return f"{name} ({error['msg'].removeprefix('Value error, ')})"
-    # Pydantic's other messages can reveal details such as a secret's length: only the error type.
+    if error["type"] == _OWN_PROBLEM:
+        return f"{name} ({error['msg']})"
+    # Any other text (Pydantic's, or a library's ValueError inside a validator) can quote the value
+    # or reveal details such as a secret's length: only the error type.
     return f"{name} ({error['type']})"
 
 
