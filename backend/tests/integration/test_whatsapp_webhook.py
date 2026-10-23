@@ -283,6 +283,10 @@ def test_a_silent_database_gets_a_503_on_time_so_meta_retries(
     monkeypatch.setattr(whatsapp_webhook, "STORE_DEADLINE_SECONDS", 1.0)
     payload = webhook_payload(message_change(PHONE_NUMBER_ID_A, wamid))
     with TestClient(create_app(make_settings(database_url=url))) as silent_client:
+        # Connections already open when the link goes silent: the request gets one and its
+        # query hangs. Cancelling it then makes psycopg wait for the database, which is exactly
+        # what the deadline must not wait for.
+        assert silent_client.get("/health").status_code == 200
         proxy.frozen.set()
         started = time.monotonic()
         status_code = _post(silent_client, payload)
@@ -291,6 +295,6 @@ def test_a_silent_database_gets_a_503_on_time_so_meta_retries(
     assert status_code == 503
     assert elapsed < 2.0
 
-    # Meta retries later, against a database that answers: stored exactly once.
+    # Meta retries later, against a database that answers, and the event is stored.
     assert _post(client, payload) == 200
     assert len(_events(database_url, CLINIC_A, wamid)) == 1
