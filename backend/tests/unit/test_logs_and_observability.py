@@ -1,3 +1,5 @@
+import asyncio
+import gc
 import json
 import logging
 import logging.config
@@ -9,7 +11,7 @@ from fastapi.testclient import TestClient
 from uvicorn.config import LOGGING_CONFIG
 
 from app.application import create_app
-from app.core.logs import JsonFormatter, configure_logging, mask_phone
+from app.core.logs import JsonFormatter, configure_logging, log_asyncio_exception, mask_phone
 from app.core.observability import SCRUBBED, scrub_event
 from tests.conftest import make_settings
 
@@ -104,6 +106,45 @@ def test_server_config_applied_after_the_app_is_imported(capsys: pytest.CaptureF
         assert logging.getLogger("uvicorn.access").disabled
         _report_like_uvicorn()
     _assert_clean_json(*capsys.readouterr())
+
+
+@pytest.mark.usefixtures("restore_logging")
+def test_asyncio_reports_errors_without_the_reprs_of_tasks_or_exceptions(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # asyncio's default handler logs "Task exception was never retrieved" followed by the repr
+    # of the task and of its exception, which can quote data.
+    configure_logging("INFO")
+
+    async def fails() -> None:
+        _fail_with_a_phone()
+
+    async def main() -> None:
+        asyncio.get_running_loop().set_exception_handler(log_asyncio_exception)
+        task = asyncio.ensure_future(fails())
+        await asyncio.sleep(0.01)
+        del task
+        gc.collect()
+
+    asyncio.run(main())
+
+    out, err = capsys.readouterr()
+    assert "529511234567" not in out + err
+    line = json.loads(out.strip().splitlines()[-1])
+    assert line["event"] == "asyncio.unhandled_exception"
+    assert line["source"] in {"task", "future"}  # which key asyncio uses depends on the version
+    assert line["exc_type"] == "ValueError"
+
+
+@pytest.mark.usefixtures("restore_logging")
+def test_the_app_installs_the_asyncio_handler_on_its_loop() -> None:
+    async def running_loop() -> asyncio.AbstractEventLoop:
+        return asyncio.get_running_loop()
+
+    with TestClient(create_app(make_settings())) as client:
+        assert client.portal is not None
+        loop = client.portal.call(running_loop)
+        assert loop.get_exception_handler() is log_asyncio_exception
 
 
 def test_sentry_events_lose_bodies_cookies_signatures_and_exception_text() -> None:

@@ -1,5 +1,7 @@
 import asyncio
+import gc
 import time
+from typing import Any
 
 import pytest
 
@@ -62,3 +64,35 @@ async def test_cancelling_the_caller_cancels_the_work() -> None:
     with pytest.raises(asyncio.CancelledError):
         await caller
     await asyncio.wait_for(cancelled.wait(), timeout=1)
+
+
+async def test_an_error_after_the_caller_is_cancelled_is_not_left_unretrieved() -> None:
+    # asyncio reports an exception nobody retrieved with the repr of the task and of the
+    # exception, which can quote data; work abandoned this way is tracked like a timeout.
+    reported: list[dict[str, Any]] = []
+    loop = asyncio.get_running_loop()
+    previous = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: reported.append(context))
+    finished = asyncio.Event()
+
+    async def work() -> None:
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            # Like psycopg when the link dies while it cancels the query.
+            await asyncio.sleep(0.01)
+            finished.set()
+            raise ConnectionResetError from None
+
+    try:
+        caller = asyncio.ensure_future(within(10, work()))
+        await asyncio.sleep(0.05)
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        await asyncio.wait_for(finished.wait(), timeout=1)
+        await asyncio.sleep(0.01)
+        gc.collect()
+    finally:
+        loop.set_exception_handler(previous)
+    assert reported == []

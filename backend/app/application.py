@@ -1,12 +1,13 @@
 """Application factory. Tests build the app with their own settings; app.main builds the real one."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from app.core.config import Environment, Settings, load_settings
-from app.core.logs import configure_logging
+from app.core.logs import configure_logging, log_asyncio_exception
 from app.core.observability import init_sentry
 from app.db.connection import Database, create_pool
 from app.health import router as health_router
@@ -24,6 +25,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # applies its own logging config, which brings back plain-text tracebacks and the access
         # log. The lifespan always runs after the server's config, whatever the launcher.
         configure_logging(settings.log_level)
+        asyncio.get_running_loop().set_exception_handler(log_asyncio_exception)
         pool = create_pool(settings)
         # Do not block startup on the database: /health reports it if it is down.
         await pool.open(wait=False)

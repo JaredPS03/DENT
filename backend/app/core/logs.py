@@ -5,6 +5,7 @@ are left out as well, because database errors quote the offending values
 (for example `Key (phone)=(+52...) already exists`).
 """
 
+import asyncio
 import json
 import logging
 import sys
@@ -44,6 +45,16 @@ class JsonFormatter(logging.Formatter):
                 last = frames[-1]
                 payload["exc_where"] = f"{last.filename}:{last.lineno} in {last.name}"
         return json.dumps(payload, default=str, ensure_ascii=False)
+
+
+def log_asyncio_exception(loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+    """Event loop exception handler. asyncio's default one logs the repr of the failed task,
+    callback or future and of its exception, any of which can quote data; this one keeps only
+    which kind of object failed, plus the exception's type and location."""
+    source = next((key for key in ("task", "future", "handle") if key in context), "loop")
+    logging.getLogger("asyncio").error(
+        "asyncio.unhandled_exception", extra={"source": source}, exc_info=context.get("exception")
+    )
 
 
 # Servers configure these loggers with their own plain-text handlers before importing the app.

@@ -18,17 +18,23 @@ def _forget(task: asyncio.Task[object]) -> None:
         task.exception()  # retrieved on purpose: nobody is waiting for this result any more
 
 
+def _abandon(task: asyncio.Task[object]) -> None:
+    """Cancels the work and lets it clean up in the background. An error it ends with is
+    retrieved there: asyncio would otherwise log it with the repr of the task and the exception."""
+    task.cancel()
+    _cleaning_up.add(task)
+    task.add_done_callback(_forget)
+
+
 async def within[T](seconds: float, work: Awaitable[T]) -> T:
     """Result of `work`, or TimeoutError after `seconds` without waiting for its cleanup."""
     task: asyncio.Task[T] = asyncio.ensure_future(work)
     try:
         done, _ = await asyncio.wait({task}, timeout=seconds)
     except asyncio.CancelledError:
-        task.cancel()
+        _abandon(task)
         raise
     if task in done:
         return task.result()
-    task.cancel()
-    _cleaning_up.add(task)
-    task.add_done_callback(_forget)
+    _abandon(task)
     raise TimeoutError
