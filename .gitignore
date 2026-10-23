@@ -1,6 +1,7 @@
-# Secretos: ningún .env se versiona, salvo las plantillas sin valores reales
-.env
-.env.*
+# Secretos: ningún .env se versiona, salvo las plantillas sin valores reales. También sus copias
+# (".env - copia", ".env.bak", "produccion.env"); la plantilla se exceptúa al final.
+.env*
+*.env
 !.env.example
 *.pem
 *.key
