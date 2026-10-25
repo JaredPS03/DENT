@@ -27,6 +27,14 @@ def mask_phone(phone: str | None) -> str:
     return f"***{digits[-4:]}" if len(digits) >= 4 else "***"
 
 
+def mask_message_id(message_id: str | None) -> str:
+    """Meta's message ids (wamid) carry the phone number of the other party, base64-encoded near
+    the start: keeps only the last 8 characters, enough to find the row in webhook_events."""
+    if not message_id or len(message_id) <= 8:
+        return "***"
+    return f"***{message_id[-8:]}"
+
+
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {

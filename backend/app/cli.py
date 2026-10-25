@@ -16,7 +16,7 @@ from collections.abc import Sequence
 import httpx
 
 from app.core.config import Environment, SettingsError, load_settings
-from app.core.logs import mask_phone
+from app.core.logs import mask_message_id, mask_phone
 from app.whatsapp.client import RecipientNotAllowedError, WhatsAppApiError, WhatsAppClient
 
 
@@ -50,7 +50,8 @@ async def _send_test_message(args: argparse.Namespace) -> int:
             sent = await client.send_text(phone_number_id, args.to, args.text)
         else:
             sent = await client.send_template(phone_number_id, args.to, args.template, args.language)
-    print(f"Mensaje enviado a {mask_phone(args.to)}. Id de Meta: {sent.meta_message_id}")
+    # The full id carries the recipient's number: only its tail is shown.
+    print(f"Mensaje enviado a {mask_phone(args.to)}. Id de Meta: {mask_message_id(sent.meta_message_id)}")
     return 0
 
 

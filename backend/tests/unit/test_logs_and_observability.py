@@ -11,7 +11,13 @@ from fastapi.testclient import TestClient
 from uvicorn.config import LOGGING_CONFIG
 
 from app.application import create_app
-from app.core.logs import JsonFormatter, configure_logging, log_asyncio_exception, mask_phone
+from app.core.logs import (
+    JsonFormatter,
+    configure_logging,
+    log_asyncio_exception,
+    mask_message_id,
+    mask_phone,
+)
 from app.core.observability import SCRUBBED, scrub_event
 from tests.conftest import make_settings
 
@@ -20,6 +26,13 @@ def test_mask_phone_keeps_only_the_last_four_digits() -> None:
     assert mask_phone("+529511234567") == "***4567"
     assert mask_phone("12") == "***"
     assert mask_phone(None) == "***"
+
+
+def test_mask_message_id_keeps_only_the_tail() -> None:
+    # Meta's ids carry the phone number of the other party, base64-encoded, near the start.
+    assert mask_message_id("wamid.HBgMNTI5NTEwMDAwMTAxFQIAERgSOUEzQ0E1") == "***OUEzQ0E1"
+    assert mask_message_id("wamid.ab") == "***"
+    assert mask_message_id(None) == "***"
 
 
 def _record(**extra: object) -> logging.LogRecord:
