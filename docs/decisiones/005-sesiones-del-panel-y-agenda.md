@@ -24,12 +24,12 @@ La especificación no fija cada cuánto se ofrecen horarios ni con cuánta antic
 - Si un usuario pertenece a varios consultorios, elige uno con `X-Clinic-Id`, que solo vale si es suyo.
 - El cuerpo de la petición no acepta `clinic_id`: un campo desconocido es 422.
 - Límite de peticiones en `/api`, en memoria, que basta con una instancia del backend:
-  - 60 por minuto por usuario con sesión;
-  - 120 intentos rechazados (401) por minuto por dirección; las IPv6 cuentan por su /64.
+  - 60 por minuto por usuario con sesión, contados en cuanto la firma es válida y antes de preguntarle nada a la base, termine la petición en 200, 403 o 422;
+  - 120 intentos rechazados (401) por minuto por dirección. Las IPv6 cuentan por su /64, y una IPv4 que llega por un socket de doble pila cuenta como IPv4.
 
   Una sesión válida nunca gasta el cupo de la dirección: detrás del proxy del hosting, todos los consultorios pueden llegar con la misma.
   - El limitador barre las llaves inactivas como mucho una vez por ventana. Con 10 000 llaves activas rechaza las nuevas, para que nadie lo vuelva lento rotando direcciones.
-- Los cuerpos de `/api` tienen un tope de 16 KB. Un middleware responde 413 antes de leer el cuerpo, también si llega por partes sin `Content-Length`: FastAPI lee y parsea el cuerpo antes de verificar la sesión.
+- Los cuerpos tienen un tope de 16 KB en todas las rutas salvo el webhook de WhatsApp, que tiene el suyo de 1 MB. Así lo heredan también las rutas futuras. Un middleware responde 413 antes de leer el cuerpo, también si llega por partes sin `Content-Length`, y compara la ruta sin el `root_path` del servidor. Hace falta porque FastAPI lee y parsea el cuerpo antes de verificar la sesión.
 
 **Agenda**
 - Horarios cada 15 minutos.

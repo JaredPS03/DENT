@@ -54,7 +54,11 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
     - el limitador se volvía lento con miles de direcciones;
     - detrás del proxy, el límite por dirección habría frenado a todos los consultorios.
 
-    Ninguno era crítico ni alto. Después de las correcciones: `uv run pytest` da **175 passed**, también dos veces seguidas contra la misma base, y pgTAP sigue en verde.
+    Ninguno era crítico ni alto. El revisor confirmó los 4 cerrados y encontró 2 problemas nuevos de severidad media, también corregidos con su prueba:
+    - el tope de cuerpo se saltaba con `--root-path`; ahora cubre todas las rutas salvo el webhook;
+    - las sesiones válidas que terminaban en 403 no gastaban cupo; ahora lo gastan antes de consultar la base.
+
+    Se corrigió además una observación menor: las IPv4 por un socket de doble pila compartían llave. Al final, `uv run pytest` da **185 passed** y pgTAP sigue en verde.
 - **Decisiones:**
   - [004 · Alta de consultorios en la Fase 1](decisiones/004-alta-de-consultorios-en-fase-1.md);
   - [005 · Sesiones del panel y reglas de la agenda](decisiones/005-sesiones-del-panel-y-agenda.md).
