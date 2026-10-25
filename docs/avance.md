@@ -4,9 +4,9 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
 
 ## Estado actual
 
-- **Fase y hito:** Fase 1 · hito 1A (agenda y disponibilidad), en revisión. La Fase 0 corre en paralelo, como dice la especificación: su código está terminado y falta su puerta con el número propio de Axon.
+- **Fase y hito:** Fase 1 · hito 1A cerrado (agenda y disponibilidad). La Fase 0 corre en paralelo, como dice la especificación: su código está terminado y falta su puerta con el número propio de Axon.
 - **Siguiente paso:**
-  - Claude cierra el 1A con `revisor-seguridad` y sigue con el 1B (WhatsApp de ida y vuelta).
+  - Claude empieza el 1B (WhatsApp de ida y vuelta) con el prompt de `prompts/fases.md`: primero el plan, para que Jared lo apruebe.
   - Jared pasa la puerta de la Fase 0 con `docs/puerta-fase-0.md`.
 - **Bloqueos:** ninguno para el 1A. Del lado de Meta, la puerta necesita el número propio de Axon dado de alta en la API; solo Jared puede tramitarlo.
 
@@ -59,6 +59,7 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
     - las sesiones válidas que terminaban en 403 no gastaban cupo; ahora lo gastan antes de consultar la base.
 
     Se corrigió además una observación menor: las IPv4 por un socket de doble pila compartían llave. Al final, `uv run pytest` da **185 passed** y pgTAP sigue en verde.
+  - **Confirmación:** el revisor dio por cerradas todas las correcciones, sin problemas nuevos. CI en verde en sus tres jobs: [run 8](https://github.com/JaredPS03/DENT/actions/runs/40156396160), [run 9](https://github.com/JaredPS03/DENT/actions/runs/40157345547) y [run 10](https://github.com/JaredPS03/DENT/actions/runs/40157729282).
 - **Decisiones:**
   - [004 · Alta de consultorios en la Fase 1](decisiones/004-alta-de-consultorios-en-fase-1.md);
   - [005 · Sesiones del panel y reglas de la agenda](decisiones/005-sesiones-del-panel-y-agenda.md).
