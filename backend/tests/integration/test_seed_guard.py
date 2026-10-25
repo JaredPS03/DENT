@@ -1,10 +1,10 @@
 """supabase/seed.sql applies nothing outside the local database of the Supabase CLI, whatever
 client runs it.
 
-psql runs a file one statement at a time, in autocommit, and by default keeps going after an
-error: a guard that only raises would print its error and let the rest of the file through,
-including the public password for axon_app. The seed is a single transaction, so the guard's
-error aborts all of it.
+psql runs a file one statement at a time and by default keeps going after an error; with
+ON_ERROR_ROLLBACK it even wraps each statement in a savepoint and commits the rest. A guard in a
+statement of its own would print its error and let the file through, including the public
+password for axon_app. In the seed, the guard, the password and every row are one statement.
 """
 
 import subprocess
@@ -24,7 +24,15 @@ def _database_container() -> str:
 
 
 @pytest.mark.usefixtures("database_url")  # fails with a clear hint when the database is down
-def test_the_seed_applies_nothing_outside_the_local_database() -> None:
+@pytest.mark.parametrize(
+    "psql_options",
+    [
+        pytest.param([], id="psql-default"),
+        # A common ~/.psqlrc setting: each statement in its own savepoint.
+        pytest.param(["--set=ON_ERROR_ROLLBACK=on"], id="psql-on-error-rollback"),
+    ],
+)
+def test_the_seed_applies_nothing_outside_the_local_database(psql_options: list[str]) -> None:
     # A cloud project never carries the CLI's development JWT secret; overriding it for this
     # session makes the local database look like one. psql runs inside the database container,
     # so the test needs nothing beyond what `pnpm db:start` already needs.
@@ -38,6 +46,7 @@ def test_the_seed_applies_nothing_outside_the_local_database() -> None:
             _database_container(),
             "psql",
             "--no-psqlrc",
+            *psql_options,
             "--username=postgres",
             "--dbname=postgres",
             "--file=-",
@@ -50,6 +59,9 @@ def test_the_seed_applies_nothing_outside_the_local_database() -> None:
     )
 
     assert "es solo para la base local de la CLI de Supabase" in result.stderr
-    # psql prints the tag of every statement that ran. Only the transaction's own BEGIN ran, and
-    # the final COMMIT became a ROLLBACK: no ALTER ROLE, no CREATE FUNCTION, no INSERT.
-    assert result.stdout.split() == ["BEGIN", "ROLLBACK"]
+    # The guard's is the only error: nothing else was even attempted. (Locally the rows already
+    # exist, so an INSERT that ran would fail as a duplicate instead of showing up as applied.)
+    assert result.stderr.count("ERROR:") == 1
+    # psql prints the tag of every statement that ran: only the transaction itself and the
+    # temporary helper functions. No DO, no ALTER ROLE, no INSERT.
+    assert set(result.stdout.split("\n")) - {""} <= {"BEGIN", "CREATE FUNCTION", "COMMIT", "ROLLBACK"}

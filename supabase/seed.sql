@@ -11,28 +11,8 @@
 --                 7 conversation, 8 message, 9 consent, a appointment, b escalation, c event,
 --                 d template, e audit_log, f webhook_event
 
--- The whole file is one transaction. psql runs a file one statement at a time and, by default,
--- keeps going after an error: without it, the guard below would print its error and every later
--- statement would still run. Inside the transaction, its error aborts everything and the final
--- commit becomes a rollback, whatever the client.
+-- The whole file runs in one transaction, and its data in one statement (see the guard below).
 begin;
-
--- Refuse to run anywhere but the local database of the Supabase CLI. `supabase db reset --linked`,
--- `db push --include-seed` or `psql -f` against a cloud project would apply this file there, with
--- fake clinics and a public password for axon_app (a role that can fix any clinic and read its
--- data). The CLI's local database carries its well-known development JWT secret; a cloud project
--- never does.
-do $$
-begin
-  if coalesce(current_setting('app.settings.jwt_secret', true), '')
-       <> 'super-secret-jwt-token-with-at-least-32-characters-long' then
-    raise exception 'supabase/seed.sql es solo para la base local de la CLI de Supabase; aquí no se aplica nada.';
-  end if;
-  -- Local-only password for the backend role, set only past the guard. In the cloud it is set
-  -- by hand and never committed.
-  alter role axon_app with password 'axon_app_local';
-end
-$$;
 
 -- Today in Mexico City: the seed may run at night, when the UTC date is already tomorrow.
 create function pg_temp.local_today() returns date
@@ -60,6 +40,27 @@ create function pg_temp.workday(p_n integer) returns date
 create function pg_temp.local_ts(p_workday integer, p_time time) returns timestamptz
   language sql stable
   as $$ select (pg_temp.workday(p_workday) + p_time) at time zone 'America/Mexico_City' $$;
+
+-- Refuse to run anywhere but the local database of the Supabase CLI. `supabase db reset --linked`,
+-- `db push --include-seed` or `psql -f` against a cloud project would apply this file there, with
+-- fake clinics and a public password for axon_app (a role that can fix any clinic and read its
+-- data). The CLI's local database carries its well-known development JWT secret; a cloud project
+-- never does.
+--
+-- The guard, the password and every row below are ONE statement: this DO block, which ends at
+-- `$seed$;` near the end of the file. When the guard fails nothing of it applies, whatever the
+-- client does next: psql keeps going after an error by default, and with ON_ERROR_ROLLBACK (or
+-- any client that wraps each statement in a savepoint) it would even commit the statements that
+-- came after a separate guard. The helper functions above are temporary and vanish with the session.
+do $seed$
+begin
+  if coalesce(current_setting('app.settings.jwt_secret', true), '')
+       <> 'super-secret-jwt-token-with-at-least-32-characters-long' then
+    raise exception 'supabase/seed.sql es solo para la base local de la CLI de Supabase; aquí no se aplica nada.';
+  end if;
+
+-- Local-only password for the backend role. In the cloud it is set by hand and never committed.
+alter role axon_app with password 'axon_app_local';
 
 -- Panel users (Supabase Auth) -------------------------------------------------------
 
@@ -276,5 +277,7 @@ insert into public.webhook_events (id, clinic_id, field, kind, meta_id, dedup_ke
    '{"messaging_product": "whatsapp", "metadata": {"display_phone_number": "529510000002", "phone_number_id": "200000000000002"}, "statuses": [{"id": "wamid.SEED.B.0002", "status": "read", "timestamp": "1760400000", "recipient_id": "529510000201"}]}',
    null);
 
--- End of the single transaction opened at the top.
+end
+$seed$;
+
 commit;
