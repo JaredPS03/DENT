@@ -47,8 +47,8 @@ create function pg_temp.local_ts(p_workday integer, p_time time) returns timesta
 -- data). The CLI's local database carries its well-known development JWT secret; a cloud project
 -- never does.
 --
--- The guard, the password and every row below are ONE statement: this DO block, which ends at
--- `$seed$;` near the end of the file. When the guard fails nothing of it applies, whatever the
+-- The guard, the password and every row below are ONE statement: this DO block, which ends right
+-- before the final commit. When the guard fails nothing of it applies, whatever the
 -- client does next: psql keeps going after an error by default, and with ON_ERROR_ROLLBACK (or
 -- any client that wraps each statement in a savepoint) it would even commit the statements that
 -- came after a separate guard. The helper functions above are temporary and vanish with the session.

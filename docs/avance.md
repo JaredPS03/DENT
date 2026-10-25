@@ -34,7 +34,7 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
     - `certifi` 2026.7.22 → 2026.10.19: certificados intermedios de eMudhra con llaves comprometidas. httpx los usa para hablar con Meta.
 - **Evidencia:**
   - **Revisión.** Tres revisores sobre `996233a..41518c3`: `revisor-seguridad`, correctitud y completitud. Encontraron 13 hallazgos, y dos verificadores independientes (reproducción e impacto) intentaron refutar cada uno. El límite de uso cortó a los verificadores de 5 hallazgos de documentación; esos los comprobé a mano contra el código. Ninguno resultó falso. Los de impacto bajo también se corrigieron porque costaban poco, salvo los breadcrumbs de Sentry, que pasan a 1B.
-  - **`revisor-seguridad` sobre esas correcciones** (`41518c3..c7aea61`) encontró 4 hallazgos de severidad media; los reproduje y se corrigieron:
+  - **`revisor-seguridad` sobre esas correcciones** (`41518c3..c7aea61`) encontró 4 hallazgos de severidad media. Los reproduje, se corrigieron, y el mismo revisor confirmó que quedaron cerrados (`c7aea61..c1ab349`), sin problemas nuevos:
     - el seed con `ON_ERROR_ROLLBACK`;
     - una `@` sin codificar en la contraseña;
     - el `wamid`, que lleva el teléfono;
@@ -54,7 +54,7 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
   - Backend: `uv run pytest` da **120 passed**. `ruff check`, `ruff format --check` y `mypy app tests` limpios.
   - Panel: `pnpm panel:check` en verde.
   - Dependencias: `pnpm audit --prod` y `pip-audit` sin vulnerabilidades conocidas. gitleaks, sin hallazgos en el historial.
-  - CI: [run 5](https://github.com/JaredPS03/DENT/actions/runs/40153508578) en verde en sus tres jobs con la primera tanda de correcciones (`c7aea61`); la prueba del seed corre también en GitHub. Las correcciones de `revisor-seguridad` se comprueban en el CI de su propio commit.
+  - CI en verde en sus tres jobs: [run 5](https://github.com/JaredPS03/DENT/actions/runs/40153508578) con la primera tanda de correcciones (`c7aea61`) y [run 6](https://github.com/JaredPS03/DENT/actions/runs/40154246992) con las de `revisor-seguridad` (`c1ab349`). La prueba del seed corre también en GitHub.
 - **Decisiones:** [003 · Revisión de cierre](decisiones/003-revision-de-cierre.md).
 - **Pendiente:**
   - **La puerta (lo haces tú):** ensayo con el número de prueba y luego el número propio de Axon, con `pnpm db:test` en verde. Todo está en `docs/puerta-fase-0.md`.
@@ -66,6 +66,7 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
   - **1B:**
     - Revisar los breadcrumbs de Sentry al descargar medios.
     - Nunca registrar un `wamid` completo.
+  - **Cuando el número de Axon pase a producción (alertas, 1D):** quitar la app de desarrollo de su WABA, para que sus avisos dejen de llegar al túnel.
   - `braces` (solo desarrollo, vía el lint del panel) sigue sin parche.
 
 ### 2026-10-14 · Fase 0 · Cimientos

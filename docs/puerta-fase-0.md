@@ -128,7 +128,7 @@ Con eso el ensayo salió bien: todo el camino funciona.
 
 ## 8. La puerta, con el número propio de Axon
 
-Cuando Meta apruebe el número propio de Axon (es parte de la Fase 0 de la especificación), repite con él:
+Cuando Meta apruebe el número propio de Axon (es parte de la Fase 0 de la especificación), repite con él. Meta conecta las apps por cuenta de WhatsApp Business (WABA), no por número: ponlo en una WABA sin números de consultorios. Y cuando ese número pase a producción, quita de su WABA esta app de desarrollo, o sus avisos seguirán llegando también al túnel.
 
 1. **Paso 2:** registra en el consultorio A el identificador de ese número, en lugar del de prueba.
 2. **Paso 6:** agrega `--phone-number-id` con ese identificador:
