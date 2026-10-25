@@ -48,7 +48,13 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
     - Pacientes y citas de otro consultorio: 404.
     - Más peticiones que el límite: 429.
   - `uv run pytest`: **168 passed**. ruff, formato y mypy limpios. `pnpm db:test`: **316 pruebas pgTAP, PASS**, 7 nuevas para `private.clinic_memberships`. `pip-audit`: sin vulnerabilidades.
-  - `revisor-seguridad`: en curso.
+  - **`revisor-seguridad`:** 4 hallazgos de severidad media, todos reproducidos y corregidos, cada uno con su prueba:
+    - un reintento podía darle al paciente dos citas a la misma hora con dos dentistas;
+    - `/api` leía cuerpos de cualquier tamaño antes de verificar la sesión;
+    - el limitador se volvía lento con miles de direcciones;
+    - detrás del proxy, el límite por dirección habría frenado a todos los consultorios.
+
+    Ninguno era crítico ni alto. Después de las correcciones: `uv run pytest` da **175 passed**, también dos veces seguidas contra la misma base, y pgTAP sigue en verde.
 - **Decisiones:**
   - [004 · Alta de consultorios en la Fase 1](decisiones/004-alta-de-consultorios-en-fase-1.md);
   - [005 · Sesiones del panel y reglas de la agenda](decisiones/005-sesiones-del-panel-y-agenda.md).
@@ -56,7 +62,9 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
 - **Pendiente:**
   - **1E:** que la base local firme las sesiones con llaves asimétricas, para que el panel local pueda llamar a `/api`.
   - **1E:** decidir si el panel necesita un endpoint para ver horarios libres. La especificación no lo lista; hoy el panel elige un horario y `/api/citas` lo valida.
-  - **1F:** el límite de peticiones detrás del proxy del hosting (`X-Forwarded-For`), y uno compartido si hay más de una instancia.
+  - **1F, condición para desplegar:** uvicorn con `--forwarded-allow-ips` limitado al proxy del hosting. Si hay más de una instancia, un limitador compartido.
+  - **1E:** CORS solo para el dominio del panel.
+  - **1B:** tope de largo para el motivo de cancelación cuando lo mande el bot.
   - **Antes del 1F:** el hito nuevo de alta de consultorios desde un archivo (decisión 004).
 
 ### 2026-10-25 · Fase 0 · Revisión de cierre
