@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.auth import KeySource, RateLimiter, SupabaseJwks
+from app.api.body_limit import ApiBodyLimit
 from app.api.citas import IP_REQUESTS_PER_MINUTE, USER_REQUESTS_PER_MINUTE
 from app.api.citas import router as citas_router
 from app.core.config import Environment, Settings, load_settings
@@ -58,4 +59,5 @@ def create_app(settings: Settings | None = None, *, jwks: KeySource | None = Non
     app.include_router(health_router)
     app.include_router(whatsapp_webhook_router)
     app.include_router(citas_router)
+    app.add_middleware(ApiBodyLimit)
     return app

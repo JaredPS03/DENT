@@ -6,6 +6,7 @@ clinic_users, read through private.clinic_memberships, never from the request bo
 """
 
 import asyncio
+import ipaddress
 import logging
 import time
 from collections import deque
@@ -169,22 +170,50 @@ class RateLimiter:
     """Requests per key in a sliding window, in memory: enough for one backend instance.
 
     With several instances the limit applies to each one; a shared limiter (or the proxy's)
-    replaces this before scaling out.
+    replaces this before scaling out. Idle keys are swept at most once per window, and while
+    `max_keys` keys are active a new key is refused, so the cost per call stays flat even when
+    someone rotates addresses.
     """
 
-    def __init__(self, limit: int, window_seconds: float = 60.0) -> None:
+    def __init__(self, limit: int, window_seconds: float = 60.0, max_keys: int = 10_000) -> None:
         self.limit = limit
         self.window = window_seconds
+        self.max_keys = max_keys
         self._hits: dict[str, deque[float]] = {}
+        self._next_sweep = float("-inf")
 
     def allow(self, key: str) -> bool:
         now = time.monotonic()
-        hits = self._hits.setdefault(key, deque())
+        hits = self._hits.get(key)
+        if hits is None:
+            if len(self._hits) >= self.max_keys:
+                self._sweep(now)
+                if len(self._hits) >= self.max_keys:
+                    return False
+            hits = self._hits[key] = deque()
         while hits and now - hits[0] >= self.window:
             hits.popleft()
         if len(hits) >= self.limit:
             return False
         hits.append(now)
-        if len(self._hits) > 10_000:  # forget idle keys so memory stays bounded
-            self._hits = {k: v for k, v in self._hits.items() if v and now - v[-1] < self.window}
         return True
+
+    def _sweep(self, now: float) -> None:
+        if now < self._next_sweep:
+            return
+        self._next_sweep = now + self.window
+        self._hits = {key: hits for key, hits in self._hits.items() if hits and now - hits[-1] < self.window}
+
+
+def client_key(host: str | None) -> str:
+    """The rate-limit key of an address: IPv6 addresses count by their /64, which one client
+    usually owns whole."""
+    if not host:
+        return "unknown"
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return host
+    if address.version == 6:
+        return str(ipaddress.ip_network(f"{address}/64", strict=False))
+    return str(address)

@@ -8,7 +8,7 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from app.api.auth import JWKS_MIN_REFRESH_SECONDS, JWKS_TTL_SECONDS, RateLimiter, SupabaseJwks
+from app.api.auth import JWKS_MIN_REFRESH_SECONDS, JWKS_TTL_SECONDS, RateLimiter, SupabaseJwks, client_key
 
 pytestmark = pytest.mark.anyio
 
@@ -88,3 +88,22 @@ def test_the_rate_limiter_counts_per_key_within_the_window(monkeypatch: pytest.M
     assert limiter.allow("carlos")
     clock[0] += 60
     assert limiter.allow("ana")
+
+
+def test_a_full_limiter_refuses_new_keys_without_slowing_down(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [0.0]
+    monkeypatch.setattr("app.api.auth.time.monotonic", lambda: clock[0])
+    limiter = RateLimiter(limit=5, window_seconds=60, max_keys=3)
+    for key in ("a", "b", "c"):
+        assert limiter.allow(key)
+    assert not limiter.allow("d")  # all three still active
+    assert limiter.allow("a")  # known keys keep working
+    clock[0] += 61
+    assert limiter.allow("d")  # the idle ones were swept
+
+
+def test_ipv6_addresses_count_by_their_64() -> None:
+    assert client_key("2001:db8:1:2::1") == client_key("2001:db8:1:2:ffff:ffff:ffff:ffff")
+    assert client_key("2001:db8:1:2::1") != client_key("2001:db8:1:3::1")
+    assert client_key("203.0.113.7") == "203.0.113.7"
+    assert client_key(None) == "unknown"

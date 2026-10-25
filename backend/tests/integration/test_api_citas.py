@@ -161,7 +161,10 @@ def test_a_taken_slot_answers_409_with_alternatives(api: TestClient, keys: TestK
     slot = free_slots(api, days_ahead=150)[0]
     book(api, keys, slot)
 
-    response = api.post("/api/citas", json=new_appointment(slot), headers=keys.headers(ASSISTANT_A))
+    other_patient = UUID("a6000000-0000-4000-8000-000000000003")
+    response = api.post(
+        "/api/citas", json=new_appointment(slot, other_patient), headers=keys.headers(ASSISTANT_A)
+    )
 
     assert response.status_code == 409
     body = response.json()
@@ -202,3 +205,29 @@ def test_too_many_requests_get_429(api: TestClient, keys: TestKeys) -> None:
     headers = keys.headers(OWNER_A)
     codes = [api.post("/api/citas", json={}, headers=headers).status_code for _ in range(3)]
     assert codes == [422, 422, 429]
+
+
+def test_a_body_over_the_cap_is_refused_before_anything_reads_it(api: TestClient, keys: TestKeys) -> None:
+    big = b'{"patient_id": "' + b"x" * 20_000 + b'"}'
+    declared = api.post("/api/citas", content=big, headers={"Content-Type": "application/json"})
+    assert declared.status_code == 413
+
+    def chunks() -> Iterator[bytes]:  # no Content-Length: counted while it arrives
+        yield b'{"patient_id": "'
+        for _ in range(20):
+            yield b"x" * 1_000
+        yield b'"}'
+
+    chunked = api.post("/api/citas", content=chunks(), headers={"Content-Type": "application/json"})
+    assert chunked.status_code == 413
+
+
+def test_only_rejected_attempts_spend_the_address_budget(api: TestClient, keys: TestKeys) -> None:
+    # Behind the hosting's proxy every clinic may share one address.
+    api.app.state.rate_limiters["ip"] = RateLimiter(limit=2)  # type: ignore[attr-defined]
+    valid = keys.headers(OWNER_A)
+    assert [api.post("/api/citas", json={}, headers=valid).status_code for _ in range(4)] == [422] * 4
+
+    forged = {"Authorization": "Bearer no-es-un-jwt"}
+    assert [api.post("/api/citas", json={}, headers=forged).status_code for _ in range(3)] == [401, 401, 429]
+    assert api.post("/api/citas", json={}, headers=valid).status_code == 422
