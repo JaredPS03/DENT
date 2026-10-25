@@ -38,3 +38,5 @@ Qué se gana, qué se pierde y qué hay que vigilar.
 | [001](001-cimientos.md) | Cimientos del repositorio: rol `axon_app`, RLS y llaves compuestas, webhook, CI y alertas | aceptada; en parte reemplazada por 002 |
 | [002](002-endurecimiento-tras-revision.md) | Endurecimiento tras la revisión de seguridad: contenido mínimo, permisos, seed solo local, plazos, orden de llegada y CI | aceptada; en parte reemplazada por 003 |
 | [003](003-revision-de-cierre.md) | Revisión de cierre de la Fase 0: seed atómico, `DATABASE_URL` con libpq, logs de asyncio, copias de `.env`, permisos y la puerta con el número de Axon | aceptada |
+| [004](004-alta-de-consultorios-en-fase-1.md) | Alta de consultorios desde un archivo, como hito de la Fase 1 | aceptada |
+| [005](005-sesiones-del-panel-y-agenda.md) | Sesiones del panel (JWKS, membresía, límite) y reglas de la agenda (15 min, 1 h de anticipación) | aceptada |

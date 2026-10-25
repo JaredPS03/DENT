@@ -4,9 +4,11 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
 
 ## Estado actual
 
-- **Fase y hito:** Fase 0 · Cimientos. El código está terminado y pasó la revisión de cierre. Falta la puerta: mandar y recibir un mensaje con el número propio de Axon, y `pnpm db:test` en verde en tu computadora.
-- **Siguiente paso:** Jared hace la lista de "Lo haces tú" de abajo, ensaya con el número de prueba de Meta y pasa la puerta con el número de Axon siguiendo `docs/puerta-fase-0.md`. Después, `/clear` y el prompt del hito 1A de `prompts/fases.md`.
-- **Bloqueos:** la puerta necesita la app de Meta y el número propio de Axon dado de alta en la API; solo Jared puede tramitarlos.
+- **Fase y hito:** Fase 1 · hito 1A (agenda y disponibilidad), en revisión. La Fase 0 corre en paralelo, como dice la especificación: su código está terminado y falta su puerta con el número propio de Axon.
+- **Siguiente paso:**
+  - Claude cierra el 1A con `revisor-seguridad` y sigue con el 1B (WhatsApp de ida y vuelta).
+  - Jared pasa la puerta de la Fase 0 con `docs/puerta-fase-0.md`.
+- **Bloqueos:** ninguno para el 1A. Del lado de Meta, la puerta necesita el número propio de Axon dado de alta en la API; solo Jared puede tramitarlo.
 
 ## Plantilla de cada entrada
 
@@ -19,6 +21,43 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
 ```
 
 ## Entradas
+
+### 2026-10-25 · Hito 1A · Agenda y disponibilidad
+
+- **Qué quedó:**
+  - **Cálculo de horarios libres**, puro y en la zona del consultorio. Usa:
+    - el horario semanal y el descanso;
+    - el margen entre citas;
+    - vacaciones y bloqueos;
+    - la duración del servicio.
+
+    Ofrece horarios cada 15 minutos y nunca en el pasado; el bot, además, solo a partir de 1 hora. Cada horario sale con un id corto y una etiqueta lista para botón ("Jue 4:00 pm").
+  - **`AgendaConnector`** (buscar, crear, mover y cancelar) y su versión en Postgres, `AxonAgenda`, con eventos y `audit_log` en cada cambio.
+  - **`POST /api/citas` y `PATCH /api/citas/{id}`**:
+    - sesión de Supabase verificada con sus llaves públicas;
+    - consultorio y rol tomados de la membresía;
+    - 409 "Ese horario ya no está disponible." con alternativas;
+    - límite de peticiones.
+- **Evidencia:**
+  - 15 pruebas de disponibilidad: los cinco casos borde del prompt y una propiedad con 300 casos de hypothesis en tres zonas horarias.
+  - **Concurrencia:** 20 reservas simultáneas del mismo horario dejan exactamente 1 (19 reciben "ya no está disponible"). Pasó 6 de 6 veces seguidas.
+  - **API:** 18 pruebas.
+    - Sin sesión, con token vencido, de otra audiencia, de otro emisor, de otro rol, con llave desconocida o HS256 con el secreto local: 401.
+    - Usuario sin consultorio: 403.
+    - `clinic_id` en el cuerpo: 422.
+    - Pacientes y citas de otro consultorio: 404.
+    - Más peticiones que el límite: 429.
+  - `uv run pytest`: **168 passed**. ruff, formato y mypy limpios. `pnpm db:test`: **316 pruebas pgTAP, PASS**, 7 nuevas para `private.clinic_memberships`. `pip-audit`: sin vulnerabilidades.
+  - `revisor-seguridad`: en curso.
+- **Decisiones:**
+  - [004 · Alta de consultorios en la Fase 1](decisiones/004-alta-de-consultorios-en-fase-1.md);
+  - [005 · Sesiones del panel y reglas de la agenda](decisiones/005-sesiones-del-panel-y-agenda.md).
+- **Dependencias nuevas, aprobadas por Jared:** `PyJWT[crypto]`, `tzdata` y `hypothesis` (solo pruebas).
+- **Pendiente:**
+  - **1E:** que la base local firme las sesiones con llaves asimétricas, para que el panel local pueda llamar a `/api`.
+  - **1E:** decidir si el panel necesita un endpoint para ver horarios libres. La especificación no lo lista; hoy el panel elige un horario y `/api/citas` lo valida.
+  - **1F:** el límite de peticiones detrás del proxy del hosting (`X-Forwarded-For`), y uno compartido si hay más de una instancia.
+  - **Antes del 1F:** el hito nuevo de alta de consultorios desde un archivo (decisión 004).
 
 ### 2026-10-25 · Fase 0 · Revisión de cierre
 
