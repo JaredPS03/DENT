@@ -22,6 +22,7 @@ from app.scheduling.connector import (
     Booking,
     InvalidChangeError,
     NotFoundError,
+    PatientBusyError,
     Shift,
     SlotUnavailableError,
 )
@@ -31,6 +32,7 @@ _MARGIN = timedelta(days=1)
 # How far ahead alternatives are looked for when a slot is no longer free.
 _ALTERNATIVES_WINDOW = timedelta(days=14)
 _ALTERNATIVES = 3
+MAX_SEARCH_WINDOW = timedelta(days=31)
 _ACTIVE = ("pending", "confirmed")
 # Noon in the clinic's time zone splits the morning from the afternoon.
 _NOON = 12
@@ -59,6 +61,8 @@ class AxonAgenda:
         actor: Actor,
         shift: Shift | None = None,
     ) -> list[Slot]:
+        # The window may come from the AI: never compute more than a month at a time.
+        window_end = min(window_end, window_start + MAX_SEARCH_WINDOW)
         async with self._db.clinic_transaction(clinic_id) as conn:
             service = await _active_service(conn, service_id)
             slots = await self._free_slots(
@@ -79,9 +83,14 @@ class AxonAgenda:
         try:
             async with self._db.clinic_transaction(clinic_id) as conn:
                 service = await _active_service(conn, booking.service_id)
-                if not await sql.patient_exists(conn, booking.patient_id):
+                if not await sql.lock_patient(conn, booking.patient_id):
                     raise NotFoundError("Ese paciente no existe en este consultorio.")
                 duration = timedelta(minutes=service.duration_minutes)
+                ends_at = booking.starts_at + duration
+                if await sql.patient_has_appointment_between(
+                    conn, booking.patient_id, booking.starts_at, ends_at
+                ):
+                    raise PatientBusyError
                 provider_id = await self._lock_free_provider(
                     conn, booking.provider_id, booking.starts_at, duration, _lead_time(actor)
                 )
@@ -92,7 +101,7 @@ class AxonAgenda:
                     service_id=booking.service_id,
                     provider_id=provider_id,
                     starts_at=booking.starts_at,
-                    ends_at=booking.starts_at + duration,
+                    ends_at=ends_at,
                     actor=actor,
                 )
                 event = "appointment_booked"
@@ -135,8 +144,15 @@ class AxonAgenda:
         try:
             async with self._db.clinic_transaction(clinic_id) as conn:
                 current = await _changeable(conn, appointment_id)
+                if starts_at == current.starts_at and provider_id in (None, current.provider_id):
+                    return current  # a retried request: nothing changes, nothing is recorded twice
                 service_id = current.service_id
                 duration = current.ends_at - current.starts_at
+                await sql.lock_patient(conn, current.patient_id)
+                if await sql.patient_has_appointment_between(
+                    conn, current.patient_id, starts_at, starts_at + duration, exclude_id=current.id
+                ):
+                    raise PatientBusyError
                 provider = await self._lock_free_provider(
                     conn,
                     provider_id or current.provider_id,

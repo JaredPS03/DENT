@@ -55,6 +55,13 @@ class SlotUnavailableError(AgendaError):
         self.alternatives = alternatives
 
 
+class PatientBusyError(AgendaError):
+    """The patient already has an active appointment at that time (a retried booking, for example)."""
+
+    def __init__(self) -> None:
+        super().__init__("Ese paciente ya tiene una cita a esa hora.")
+
+
 class NotFoundError(AgendaError):
     """The appointment, patient, service or provider does not exist in this clinic."""
 

@@ -42,8 +42,27 @@ async def get_service(conn: AsyncConnection, service_id: UUID) -> Service | None
     return Service(*row) if row else None
 
 
-async def patient_exists(conn: AsyncConnection, patient_id: UUID) -> bool:
-    cursor = await conn.execute("select 1 from public.patients where id = %s", (patient_id,))
+async def lock_patient(conn: AsyncConnection, patient_id: UUID) -> bool:
+    """Serializes the bookings of one patient, so a retried request cannot give them two
+    appointments at once with different providers. False if the patient is not in this clinic."""
+    cursor = await conn.execute(
+        "select 1 from public.patients where id = %s for no key update", (patient_id,)
+    )
+    return await cursor.fetchone() is not None
+
+
+async def patient_has_appointment_between(
+    conn: AsyncConnection, patient_id: UUID, start: datetime, end: datetime, *, exclude_id: UUID | None = None
+) -> bool:
+    cursor = await conn.execute(
+        """
+        select 1 from public.appointments
+        where patient_id = %s and status in ('pending', 'confirmed')
+          and starts_at < %s and ends_at > %s and id is distinct from %s
+        limit 1
+        """,
+        (patient_id, end, start, exclude_id),
+    )
     return await cursor.fetchone() is not None
 
 

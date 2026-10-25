@@ -2,6 +2,7 @@
 their events and audit trail, and zero double bookings under concurrency."""
 
 import asyncio
+from collections import Counter
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
@@ -17,6 +18,7 @@ from app.scheduling.connector import (
     Booking,
     InvalidChangeError,
     NotFoundError,
+    PatientBusyError,
     SlotUnavailableError,
 )
 from tests.conftest import CLINIC_A, CLINIC_B
@@ -125,7 +127,8 @@ async def test_twenty_simultaneous_bookings_leave_exactly_one(agenda: AxonAgenda
     )
 
     booked = [result for result in results if not isinstance(result, BaseException)]
-    refused = [result for result in results if isinstance(result, SlotUnavailableError)]
+    # The same patient every time, like a retried request: refused for the slot or for the patient.
+    refused = [result for result in results if isinstance(result, SlotUnavailableError | PatientBusyError)]
     assert len(booked) == 1
     assert len(refused) == 19
     rows = rows_as_clinic(
@@ -228,3 +231,81 @@ async def test_another_clinic_s_patient_or_appointment_does_not_exist_here(agend
         await agenda.cancel(CLINIC_B, appointment.id, actor=STAFF)
     with pytest.raises(NotFoundError):
         await agenda.find_slots(CLINIC_B, CLEANING, slot.starts_at, slot.ends_at, actor=STAFF)
+
+
+@pytest.fixture
+async def second_dentist(db: Database) -> AsyncIterator[UUID]:
+    """A second active dentist in clinic A with the same hours, for as long as the test runs."""
+    async with db.clinic_transaction(CLINIC_A) as conn:
+        cursor = await conn.execute(
+            "insert into public.providers (clinic_id, name) values (%s, 'Dr. Segundo Prueba') returning id",
+            (CLINIC_A,),
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        provider_id: UUID = row[0]
+        await conn.execute(
+            """
+            insert into public.schedules
+              (clinic_id, provider_id, weekday, start_time, end_time, break_start, break_end, buffer_minutes)
+            select %s, %s, d, '09:00', '19:00', '14:00', '16:00', 10 from generate_series(1, 5) d
+            """,
+            (CLINIC_A, provider_id),
+        )
+    try:
+        yield provider_id
+    finally:
+        async with db.clinic_transaction(CLINIC_A) as conn:
+            await conn.execute(
+                "update public.appointments set status = 'cancelled', cancelled_at = now()"
+                " where provider_id = %s and status in ('pending', 'confirmed')",
+                (provider_id,),
+            )
+            await conn.execute("delete from public.schedules where provider_id = %s", (provider_id,))
+            await conn.execute("update public.providers set active = false where id = %s", (provider_id,))
+
+
+async def test_a_retried_booking_never_gives_the_patient_two_appointments(
+    agenda: AxonAgenda, second_dentist: UUID, database_url: str
+) -> None:
+    # A time both dentists have free, so the patient cannot already be booked then.
+    slots = await free_slots(agenda, days_ahead=170)
+    both_free = Counter(slot.starts_at for slot in slots)
+    slot = next(slot for slot in slots if both_free[slot.starts_at] == 2)
+
+    first, retried = await asyncio.gather(
+        agenda.create(CLINIC_A, booking_at(slot), actor=STAFF),
+        agenda.create(CLINIC_A, booking_at(slot), actor=STAFF),
+        return_exceptions=True,
+    )
+
+    outcomes = [first, retried]
+    assert sum(not isinstance(outcome, BaseException) for outcome in outcomes) == 1
+    assert sum(isinstance(outcome, PatientBusyError) for outcome in outcomes) == 1
+    with pytest.raises(PatientBusyError):
+        await agenda.create(CLINIC_A, booking_at(slot), actor=STAFF)  # with the other dentist free
+    rows = rows_as_clinic(
+        database_url,
+        CLINIC_A,
+        "select count(*) from public.appointments where patient_id = %s and starts_at = %s"
+        " and status in ('pending', 'confirmed')",
+        (PATIENT_A, slot.starts_at),
+    )
+    assert rows[0][0] == 1
+
+
+async def test_moving_to_the_same_time_records_nothing(agenda: AxonAgenda, database_url: str) -> None:
+    slot = (await free_slots(agenda, days_ahead=180))[0]
+    appointment = await agenda.create(CLINIC_A, booking_at(slot), actor=STAFF)
+
+    again = await agenda.move(CLINIC_A, appointment.id, slot.starts_at, actor=STAFF)
+
+    assert again == appointment
+    assert events_of(database_url, appointment.id) == [("appointment_booked", None)]
+
+
+async def test_a_search_never_spans_more_than_a_month(agenda: AxonAgenda) -> None:
+    start = datetime.now(UTC) + timedelta(days=200)
+    slots = await agenda.find_slots(CLINIC_A, CLEANING, start, start + timedelta(days=365), actor=STAFF)
+    assert slots
+    assert max(slot.starts_at for slot in slots) < start + timedelta(days=31)
