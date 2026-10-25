@@ -6,15 +6,19 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.auth import KeySource, RateLimiter, SupabaseJwks
+from app.api.citas import IP_REQUESTS_PER_MINUTE, USER_REQUESTS_PER_MINUTE
+from app.api.citas import router as citas_router
 from app.core.config import Environment, Settings, load_settings
 from app.core.logs import configure_logging, log_asyncio_exception
 from app.core.observability import init_sentry
 from app.db.connection import Database, create_pool
 from app.health import router as health_router
+from app.scheduling.axon import AxonAgenda
 from app.webhooks.whatsapp import router as whatsapp_webhook_router
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, jwks: KeySource | None = None) -> FastAPI:
     settings = settings or load_settings()
     configure_logging(settings.log_level)
     init_sentry(settings)
@@ -30,6 +34,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Do not block startup on the database: /health reports it if it is down.
         await pool.open(wait=False)
         app.state.db = Database(pool)
+        app.state.agenda = AxonAgenda(app.state.db)
         try:
             yield
         finally:
@@ -44,6 +49,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url="/openapi.json" if show_docs else None,
     )
     app.state.settings = settings
+    # Panel sessions are verified with the project's public keys; tests bring their own.
+    app.state.jwks = jwks or SupabaseJwks(settings.supabase_url)
+    app.state.rate_limiters = {
+        "user": RateLimiter(USER_REQUESTS_PER_MINUTE),
+        "ip": RateLimiter(IP_REQUESTS_PER_MINUTE),
+    }
     app.include_router(health_router)
     app.include_router(whatsapp_webhook_router)
+    app.include_router(citas_router)
     return app

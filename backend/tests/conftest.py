@@ -48,6 +48,7 @@ def make_settings(**overrides: Any) -> Settings:
         "meta_graph_version": "v24.0",
         "whatsapp_allowed_test_numbers": (ALLOWED_TEST_NUMBER,),
         "whatsapp_test_phone_number_id": "123456789012345",
+        "supabase_url": "https://axon-test.supabase.co",
         "sentry_dsn": None,
     }
     values.update(overrides)

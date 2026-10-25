@@ -10,6 +10,7 @@ REQUIRED_ENV = {
     "WHATSAPP_VERIFY_TOKEN": "super-secreto-verify",
     "WHATSAPP_ACCESS_TOKEN": "super-secreto-token",
     "META_GRAPH_VERSION": "v24.0",
+    "SUPABASE_URL": "https://axon-test.supabase.co",
 }
 
 
@@ -20,6 +21,7 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
         "WHATSAPP_ALLOWED_TEST_NUMBERS",
         "WHATSAPP_TEST_PHONE_NUMBER_ID",
         "SENTRY_DSN",
+        "SUPABASE_URL",
     ):
         monkeypatch.delenv(name, raising=False)
     return monkeypatch
@@ -196,3 +198,24 @@ def test_sslmode_is_read_as_libpq_reads_it(clean_env: pytest.MonkeyPatch) -> Non
     )
     with pytest.raises(SettingsError):
         load_settings(env_file=None)
+
+
+def test_the_supabase_url_is_checked_and_needs_https_outside_development(
+    clean_env: pytest.MonkeyPatch,
+) -> None:
+    for name, value in REQUIRED_ENV.items():
+        clean_env.setenv(name, value)
+    clean_env.setenv("SUPABASE_URL", "http://127.0.0.1:54321")  # the local one, fine in development
+    assert load_settings(env_file=None).supabase_url == "http://127.0.0.1:54321"
+
+    clean_env.setenv("SUPABASE_URL", "127.0.0.1:54321")
+    with pytest.raises(SettingsError, match="SUPABASE_URL"):
+        load_settings(env_file=None)
+
+    clean_env.setenv("ENVIRONMENT", "production")
+    clean_env.setenv("DATABASE_URL", REQUIRED_ENV["DATABASE_URL"] + "?sslmode=require")
+    clean_env.setenv("SUPABASE_URL", "http://axon.supabase.co")
+    with pytest.raises(SettingsError, match="https"):
+        load_settings(env_file=None)
+    clean_env.setenv("SUPABASE_URL", "https://axon.supabase.co/")
+    assert load_settings(env_file=None).supabase_url == "https://axon.supabase.co"

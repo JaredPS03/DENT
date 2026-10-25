@@ -10,6 +10,7 @@ import re
 from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 import psycopg
 from psycopg.conninfo import conninfo_to_dict
@@ -73,6 +74,10 @@ class Settings(BaseSettings):
     # Phone number id that `app.cli send-test-message` sends from (Meta's test number).
     whatsapp_test_phone_number_id: str | None = None
 
+    # Supabase project URL, for the public keys that verify panel sessions (JWKS). Locally,
+    # the one `pnpm db:start` prints (http://127.0.0.1:54321).
+    supabase_url: str = Field(min_length=1)
+
     sentry_dsn: SecretStr | None = None
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
@@ -98,6 +103,16 @@ class Settings(BaseSettings):
         if environment not in (None, Environment.DEVELOPMENT) and params.get("sslmode") not in TLS_SSLMODES:
             raise _problem("outside development it needs sslmode=require (or verify-ca / verify-full)")
         return value
+
+    @field_validator("supabase_url")
+    @classmethod
+    def _validate_supabase_url(cls, value: str, info: ValidationInfo) -> str:
+        parts = urlsplit(value)
+        if parts.scheme not in ("http", "https") or not parts.hostname or parts.query or parts.fragment:
+            raise _problem("it must look like https://<project-ref>.supabase.co")
+        if info.data.get("environment") not in (None, Environment.DEVELOPMENT) and parts.scheme != "https":
+            raise _problem("outside development it must use https")
+        return value.rstrip("/")
 
     @field_validator("whatsapp_allowed_test_numbers", mode="before")
     @classmethod
