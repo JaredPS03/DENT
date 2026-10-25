@@ -20,30 +20,41 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
 
 ## Entradas
 
-### 2026-10-23 · Fase 0 · Revisión de cierre
+### 2026-10-25 · Fase 0 · Revisión de cierre
 
 - **Qué quedó:**
-  - El seed es una sola transacción: aplicado a la nube con cualquier cliente, psql incluido, no aplica nada.
-  - `DATABASE_URL` se lee con el parser de libpq. Si está mal formada, el backend no arranca y lo dice sin citarla. El error de arranque solo muestra textos propios.
+  - El seed no aplica nada en la nube, con ningún cliente: la guarda, la contraseña y todas las filas son una sola sentencia, dentro de una transacción. Eso incluye psql con `ON_ERROR_ROLLBACK`.
+  - `DATABASE_URL` se lee con el parser de libpq. Si está mal formada o lleva símbolos sin codificar, el backend no arranca y lo dice sin citarla. El error de arranque solo muestra textos propios.
+  - El `wamid` (id de Meta) lleva el teléfono codificado: el comando de prueba imprime solo su final, y la evidencia de la puerta usa solo ese final.
   - asyncio ya no escribe en los logs el `repr` de tareas y excepciones. `within` limpia el trabajo abandonado en sus dos salidas.
   - `.gitignore` ignora las copias de `.env`, y `.claude/settings.json` usa comodines contra los comandos que tocan la base de la nube.
-  - La guía de la puerta pide el número propio de Axon y `pnpm db:test`. El número de prueba de Meta queda como ensayo, y la guía advierte no usar el número de tu prima.
+  - La guía de la puerta pide el número propio de Axon y `pnpm db:test`. El número de prueba de Meta queda como ensayo. La prueba se hace en una app de Meta solo para desarrollo, sin el número de tu prima ni de ningún consultorio.
   - Parches de seguridad publicados después del 14 de octubre:
     - Next.js 16.4.0 → 16.4.2: 2 avisos críticos (ejecución remota de código sin autenticación) y 1 alto. Con ellos, `next build` se negaba a compilar.
     - `certifi` 2026.7.22 → 2026.10.19: certificados intermedios de eMudhra con llaves comprometidas. httpx los usa para hablar con Meta.
 - **Evidencia:**
   - **Revisión.** Tres revisores sobre `996233a..41518c3`: `revisor-seguridad`, correctitud y completitud. Encontraron 13 hallazgos, y dos verificadores independientes (reproducción e impacto) intentaron refutar cada uno. El límite de uso cortó a los verificadores de 5 hallazgos de documentación; esos los comprobé a mano contra el código. Ninguno resultó falso. Los de impacto bajo también se corrigieron porque costaban poco, salvo los breadcrumbs de Sentry, que pasan a 1B.
+  - **`revisor-seguridad` sobre esas correcciones** (`41518c3..c7aea61`) encontró 4 hallazgos de severidad media; los reproduje y se corrigieron:
+    - el seed con `ON_ERROR_ROLLBACK`;
+    - una `@` sin codificar en la contraseña;
+    - el `wamid`, que lleva el teléfono;
+    - la URL del webhook, que es de toda la app de Meta.
+
+    Sus sugerencias menores sobre `settings.json` quedan como decisión tuya para 1F.
   - **Cada corrección trae una prueba que fallaba antes:**
-    - Seed con psql: antes corría `ALTER ROLE`, `CREATE FUNCTION` y los `INSERT`; ahora solo `BEGIN` y `ROLLBACK`.
-    - 19 pruebas de configuración: contraseñas con `%`, `/` o caracteres de ancho completo, y URLs mal formadas. Ninguna cita la contraseña.
+    - Seed con psql, con y sin `ON_ERROR_ROLLBACK`:
+      - la versión del 14 de octubre dejaba correr `ALTER ROLE` y los `INSERT`;
+      - la intermedia (`c7aea61`), con `ON_ERROR_ROLLBACK`, todavía corría los `INSERT`: 21 errores en local, solo porque las filas ya existían;
+      - ahora el único error es el de la guarda.
+    - 25 pruebas de configuración: contraseñas con `%`, `/`, `@` o caracteres de ancho completo, y URLs mal formadas. Ninguna cita la contraseña.
+    - El comando de prueba ya no imprime el `wamid` completo.
     - `within` cuando cancelan a quien llama: antes asyncio registraba "Task exception was never retrieved".
     - Webhook con la base muda: con `asyncio.timeout` tarda 11.0 s y falla; con `within`, 1 s.
   - `pnpm db:reset` y `pnpm db:test`: 6 archivos, **309 pruebas pgTAP, PASS**.
-  - Backend: `uv run pytest` da **111 passed**. `ruff check`, `ruff format --check` y `mypy app tests` limpios.
+  - Backend: `uv run pytest` da **120 passed**. `ruff check`, `ruff format --check` y `mypy app tests` limpios.
   - Panel: `pnpm panel:check` en verde.
   - Dependencias: `pnpm audit --prod` y `pip-audit` sin vulnerabilidades conocidas. gitleaks, sin hallazgos en el historial.
-  - `revisor-seguridad` sobre este diff: en curso al subir estos commits.
-  - CI: en curso al subir estos commits.
+  - CI: [run 5](https://github.com/JaredPS03/DENT/actions/runs/40153508578) en verde en sus tres jobs con la primera tanda de correcciones (`c7aea61`); la prueba del seed corre también en GitHub. Las correcciones de `revisor-seguridad` se comprueban en el CI de su propio commit.
 - **Decisiones:** [003 · Revisión de cierre](decisiones/003-revision-de-cierre.md).
 - **Pendiente:**
   - **La puerta (lo haces tú):** ensayo con el número de prueba y luego el número propio de Axon, con `pnpm db:test` en verde. Todo está en `docs/puerta-fase-0.md`.
@@ -51,7 +62,10 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
     - Las migraciones a la nube se aplican desde CI, con aprobación.
     - Nunca uses el modo bypass en una computadora enlazada a la nube.
     - El hook 5 de `docs/hooks-propuestos.md` queda propuesto.
-  - **1B:** revisar los breadcrumbs de Sentry al descargar medios.
+    - Decidir si `settings.json` pide permiso también antes de `config push`, `projects delete`, `backups restore`, `storage rm` y `db dump`.
+  - **1B:**
+    - Revisar los breadcrumbs de Sentry al descargar medios.
+    - Nunca registrar un `wamid` completo.
   - `braces` (solo desarrollo, vía el lint del panel) sigue sin parche.
 
 ### 2026-10-14 · Fase 0 · Cimientos

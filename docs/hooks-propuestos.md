@@ -56,6 +56,12 @@ Solo toca el archivo editado, así que es rápido.
 
 El mensaje: "Las migraciones a la nube se aplican desde CI".
 
+Y que pida confirmación (`"permissionDecision": "ask"`) ante los comandos que gestionan el proyecto de la nube, sin importar las banderas:
+
+- `config push`: mandaría a producción la configuración local de Auth;
+- `projects delete`, `backups restore` y `storage rm`;
+- `db dump`: exporta a tu computadora datos de pacientes.
+
 ```json
 {
   "hooks": {

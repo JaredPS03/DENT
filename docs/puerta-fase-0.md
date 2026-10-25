@@ -7,7 +7,7 @@ La Fase 0 termina cuando se cumplen las dos mitades de su puerta (`prompts/fases
 
 Esta guía lo hace en tu computadora (Windows, PowerShell o WSL2) con la base local. Primero **ensayas con el número de prueba de Meta**, que es gratis y está listo en minutos. Después repites tres pasos con el número propio de Axon cuando Meta lo apruebe (paso 8): ese es el que cuenta para la puerta. La primera vez tardas unos 30 minutos.
 
-**No uses el número de tu prima para esta prueba.** Con su número conectado, los mensajes reales de sus pacientes llegarían a tu computadora y se guardarían en tu base local, y nunca deben salir de producción.
+**No uses el número de tu prima ni una app de Meta que lo tenga conectado.** La URL del webhook es de toda la app: los mensajes reales de sus pacientes pasarían por el túnel hasta tu computadora, y nunca deben salir de producción.
 
 ## Antes de empezar
 
@@ -17,11 +17,11 @@ Esta guía lo hace en tu computadora (Windows, PowerShell o WSL2) con la base lo
 
 ## Lo que necesitas de Meta
 
-En [developers.facebook.com](https://developers.facebook.com), crea una app de tipo Empresa y agrégale el producto WhatsApp. En **WhatsApp > Configuración de la API** encuentras:
+En [developers.facebook.com](https://developers.facebook.com), crea una app de tipo Empresa **solo para desarrollo** y agrégale el producto WhatsApp. No conectes a esa app el número de tu prima ni el de ningún consultorio. En **WhatsApp > Configuración de la API** encuentras:
 
 - **Número de prueba e identificador del número** (`phone_number_id`): Meta te da un número de prueba gratis.
 - **Destinatarios:** agrega tu celular como número verificado; con el número de prueba solo puedes escribirle a esos números, hasta 5.
-- **Token de acceso:** el temporal dura 24 h y basta para la prueba. Para algo que dure, usa el token de un usuario del sistema de tu Business Manager.
+- **Token de acceso:** el temporal dura 24 h y basta para la prueba. Para algo que dure, usa el token de un usuario del sistema de tu Business Manager que solo tenga asignados los activos de Axon.
 
 Y en **Configuración de la app > Básica**, la **clave secreta de la app**.
 
@@ -104,14 +104,14 @@ cd backend
 uv run python -m app.cli send-test-message --to +5295XXXXXXXX
 ```
 
-Manda la plantilla `hello_world` de Meta (en inglés). Debe imprimir `Mensaje enviado a ***XXXX. Id de Meta: wamid…`.
+Manda la plantilla `hello_world` de Meta (en inglés). Debe imprimir `Mensaje enviado a ***XXXX. Id de Meta: ***XXXXXXXX`. Del id solo sale el final, porque el id completo (`wamid`) lleva tu número de celular codificado.
 
 ## 7. Recibe la respuesta
 
 Contesta "hola" desde tu celular. En la terminal del backend aparece una línea `whatsapp_webhook.received` con `"stored": 1`. Compruébalo en el SQL Editor de Studio:
 
 ```sql
-select kind, meta_id,
+select kind, right(meta_id, 8) as id_final,
        coalesce(payload->'statuses'->0->>'status', payload->'messages'->0->>'type') as detalle,
        received_at
 from public.webhook_events
@@ -122,7 +122,7 @@ limit 5;
 Debe aparecer:
 
 - una fila `message` con detalle `text`, que es tu respuesta;
-- filas `status` con detalle `sent`, `delivered` y `read`, del mensaje que mandaste. Un `failed` quiere decir que Meta no lo entregó.
+- filas `status` con detalle `sent`, `delivered` y `read`, del mensaje que mandaste: su `id_final` es el que imprimió el comando. Un `failed` quiere decir que Meta no lo entregó.
 
 Con eso el ensayo salió bien: todo el camino funciona.
 
@@ -140,7 +140,7 @@ Cuando Meta apruebe el número propio de Axon (es parte de la Fase 0 de la espec
    Si tu cuenta no tiene la plantilla `hello_world`, usa una de tus plantillas aprobadas con `--template` y `--language` (por ejemplo `--language es_MX`).
 3. **Paso 7:** comprueba tu respuesta y los estados igual que en el ensayo.
 
-Con eso, y `pnpm db:test` en verde, la puerta está cumplida. Anótala en `docs/avance.md` con la fecha y solo el `wamid` como evidencia, sin teléfonos ni texto.
+Con eso, y `pnpm db:test` en verde, la puerta está cumplida. Anótala en `docs/avance.md` con la fecha y, como evidencia, solo el `id_final` de los dos mensajes. Nunca pegues un `wamid` completo, un teléfono ni el texto de un mensaje: lo que entra al repo se queda en su historial.
 
 ## Si algo falla
 
