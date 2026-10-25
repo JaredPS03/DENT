@@ -30,7 +30,7 @@ create function private.my_clinic_ids() returns setof uuid
   as $$ select clinic_id from public.clinic_users where user_id = (select auth.uid()) $$;
 ```
 
-- Las únicas lecturas sin consultorio fijado son dos funciones `security definer` que devuelven solo ids: `private.clinic_for_phone_number(text)`, para enrutar el webhook, y `private.active_clinic_ids()`, para las tareas programadas.
+- Las únicas lecturas sin consultorio fijado son tres funciones `security definer` que devuelven solo ids: `private.clinic_for_phone_number(text)`, para enrutar el webhook; `private.active_clinic_ids()`, para las tareas programadas, y `private.clinic_memberships(uuid)`, para la sesión del panel (consultorio y rol; decisión 005).
 - Toda función `security definer` lleva `set search_path = ''` y nombres calificados. `usage` en `private` y `execute` en cada función, solo para el rol que la usa.
 
 ## RLS: el mismo patrón en todas las tablas
