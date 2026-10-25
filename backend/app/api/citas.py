@@ -104,8 +104,8 @@ class SlotOut(BaseModel):
 
 
 async def panel_session(request: Request) -> PanelSession:
-    """The verified session, within the limits: per user once signed in, and per address only for
-    rejected attempts. Behind the hosting's proxy every request may share one address, so a
+    """The verified session, within the limits: per user for every validly signed session, and per
+    address only for rejected attempts. Behind the hosting's proxy every request may share one address, so a
     valid session never spends that address's budget."""
     settings = get_settings_from_app(request)
     limiters = cast(dict[str, RateLimiter], request.app.state.rate_limiters)
@@ -115,14 +115,13 @@ async def panel_session(request: Request) -> PanelSession:
             get_db(request),
             cast(KeySource, request.app.state.jwks),
             issuer=f"{settings.supabase_url}/auth/v1",
+            user_limiter=limiters["user"],
         )
     except HTTPException as rejected:
         address = client_key(request.client.host if request.client else None)
         if rejected.status_code == status.HTTP_401_UNAUTHORIZED and not limiters["ip"].allow(address):
             raise _too_many() from None
         raise
-    if not limiters["user"].allow(str(session.user_id)):
-        raise _too_many()
     return session
 
 

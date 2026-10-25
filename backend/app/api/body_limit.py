@@ -1,4 +1,4 @@
-"""A size cap for /api request bodies, applied before anything reads or parses them.
+"""A size cap for request bodies, applied before anything reads or parses them.
 
 FastAPI reads and decodes the whole JSON body before it resolves the session, so without this a
 request with no session could still make the server hold a huge body in memory.
@@ -10,7 +10,7 @@ import json
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 # Panel requests are a few hundred bytes; this leaves room and nothing more.
-MAX_API_BODY_BYTES = 16 * 1024
+MAX_BODY_BYTES = 16 * 1024
 _TOO_LARGE = json.dumps({"detail": "La solicitud es demasiado grande."}).encode()
 
 
@@ -18,14 +18,22 @@ class _BodyTooLargeError(Exception):
     pass
 
 
-class ApiBodyLimit:
-    def __init__(self, app: ASGIApp, *, limit: int = MAX_API_BODY_BYTES, prefix: str = "/api/") -> None:
+# Routes that cap their own body: Meta's webhook allows up to 1 MB and checks it while reading.
+EXEMPT_PATHS = ("/webhooks/whatsapp",)
+
+
+class BodyLimit:
+    """Applies to every route except EXEMPT_PATHS, so routes added later get the cap too."""
+
+    def __init__(
+        self, app: ASGIApp, *, limit: int = MAX_BODY_BYTES, exempt: tuple[str, ...] = EXEMPT_PATHS
+    ) -> None:
         self.app = app
         self.limit = limit
-        self.prefix = prefix
+        self.exempt = exempt
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or not scope["path"].startswith(self.prefix):
+        if scope["type"] != "http" or _route_path(scope) in self.exempt:
             await self.app(scope, receive, send)
             return
         declared = dict(scope["headers"]).get(b"content-length")
@@ -60,6 +68,15 @@ class ApiBodyLimit:
 
         with contextlib.suppress(_BodyTooLargeError):
             await self.app(scope, capped_receive, guarded_send)
+
+
+def _route_path(scope: Scope) -> str:
+    """The path the router matches: servers prepend the root path (`--root-path`) to it."""
+    path: str = scope["path"]
+    root_path: str = scope.get("root_path", "")
+    if root_path and path.startswith(root_path):
+        return path[len(root_path) :] or "/"
+    return path
 
 
 async def _reject(send: Send) -> None:

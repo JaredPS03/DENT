@@ -107,3 +107,8 @@ def test_ipv6_addresses_count_by_their_64() -> None:
     assert client_key("2001:db8:1:2::1") != client_key("2001:db8:1:3::1")
     assert client_key("203.0.113.7") == "203.0.113.7"
     assert client_key(None) == "unknown"
+
+
+def test_ipv4_clients_on_a_dual_stack_listener_keep_their_own_key() -> None:
+    assert client_key("::ffff:203.0.113.7") == "203.0.113.7"
+    assert client_key("::ffff:203.0.113.7") != client_key("::ffff:198.51.100.9")

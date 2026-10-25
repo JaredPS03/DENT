@@ -231,3 +231,16 @@ def test_only_rejected_attempts_spend_the_address_budget(api: TestClient, keys: 
     forged = {"Authorization": "Bearer no-es-un-jwt"}
     assert [api.post("/api/citas", json={}, headers=forged).status_code for _ in range(3)] == [401, 401, 429]
     assert api.post("/api/citas", json={}, headers=valid).status_code == 422
+
+
+def test_valid_sessions_that_end_in_403_still_spend_their_budget(api: TestClient, keys: TestKeys) -> None:
+    api.app.state.rate_limiters["user"] = RateLimiter(limit=2)  # type: ignore[attr-defined]
+    stranger = keys.headers(UUID(int=8))  # a valid account without a clinic
+    assert [api.post("/api/citas", json={}, headers=stranger).status_code for _ in range(3)] == [
+        403,
+        403,
+        429,
+    ]
+
+    foreign = keys.headers(OWNER_A) | {"X-Clinic-Id": "b0000000-0000-4000-8000-000000000001"}
+    assert [api.post("/api/citas", json={}, headers=foreign).status_code for _ in range(3)] == [403, 403, 429]

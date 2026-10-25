@@ -132,9 +132,14 @@ async def clinic_memberships(db: Database, user_id: UUID) -> list[tuple[UUID, Ro
         return [(row[0], cast(Role, row[1])) for row in await cursor.fetchall()]
 
 
-async def resolve_session(request: Request, db: Database, keys: KeySource, issuer: str) -> PanelSession:
-    """The session of an /api request, or 401/403. A user in several clinics picks one with the
-    X-Clinic-Id header, and it only counts if it is one of their own."""
+async def resolve_session(
+    request: Request, db: Database, keys: KeySource, issuer: str, user_limiter: "RateLimiter"
+) -> PanelSession:
+    """The session of an /api request, or 401/403/429. A user in several clinics picks one with
+    the X-Clinic-Id header, and it only counts if it is one of their own.
+
+    Every validly signed session spends its user's budget before the database is asked anything,
+    whatever the answer ends up being (200, 403 or 422)."""
     scheme, _, token = (request.headers.get("authorization") or "").partition(" ")
     if scheme.lower() != "bearer" or not token:
         raise _unauthorized("missing")
@@ -142,6 +147,8 @@ async def resolve_session(request: Request, db: Database, keys: KeySource, issue
         user_id = await verify_access_token(token.strip(), keys, issuer)
     except InvalidSessionError as exc:
         raise _unauthorized(str(exc)) from None
+    if not user_limiter.allow(str(user_id)):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Demasiadas solicitudes; espera un minuto.")
 
     memberships = await clinic_memberships(db, user_id)
     if not memberships:
@@ -214,6 +221,8 @@ def client_key(host: str | None) -> str:
         address = ipaddress.ip_address(host)
     except ValueError:
         return host
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        return str(address.ipv4_mapped)  # an IPv4 client on a dual-stack listener
     if address.version == 6:
         return str(ipaddress.ip_network(f"{address}/64", strict=False))
     return str(address)
