@@ -84,10 +84,15 @@ class Settings(BaseSettings):
         # be logged on every connection attempt.
         try:
             params = conninfo_to_dict(value.get_secret_value())
-        except psycopg.Error:
+        except (psycopg.Error, UnicodeError):
             raise _problem(MALFORMED_DATABASE_URL) from None
-        # An unencoded / in the password makes libpq read its first part as the port.
-        if params.get("port") is not None and not PORT_PATTERN.fullmatch(str(params["port"])):
+        # Unencoded symbols in the password parse "fine" but wrong, and the pool then logs the
+        # misplaced piece on every attempt: after a / libpq reads a port (and, when it is a number,
+        # a database name), after a second @ a host.
+        port = params.get("port")
+        if port is not None and not PORT_PATTERN.fullmatch(str(port)):
+            raise _problem(MALFORMED_DATABASE_URL)
+        if any("@" in str(params.get(key) or "") for key in ("host", "hostaddr", "dbname")):
             raise _problem(MALFORMED_DATABASE_URL)
         environment = info.data.get("environment")
         if environment not in (None, Environment.DEVELOPMENT) and params.get("sslmode") not in TLS_SSLMODES:

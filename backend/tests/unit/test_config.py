@@ -125,6 +125,11 @@ LEAKY_PASSWORD = "Contra9Secreta"
         f"postgresql://axon_app.ref:{LEAKY_PASSWORD}%zz@aws-0.pooler.supabase.com:6543/postgres?sslmode=require",
         # An unencoded / splits the password: libpq would take its first part for the port.
         f"postgresql://axon_app.ref:{LEAKY_PASSWORD}/x@aws-0.pooler.supabase.com:6543/postgres?sslmode=require",
+        # ...or, when that part is a number, the rest for the database name.
+        f"postgresql://axon_app.ref:123/{LEAKY_PASSWORD}@aws-0.pooler.supabase.com:6543/postgres?sslmode=require",
+        # An unencoded @: libpq cuts the password at the first one and the rest becomes the host,
+        # which psycopg quotes in its "failed to resolve host" errors.
+        f"postgresql://axon_app.ref:x@{LEAKY_PASSWORD}@aws-0.pooler.supabase.com:6543/postgres?sslmode=require",
         # Malformed URLs whose parser errors quote the whole URL.
         f"postgresql://axon_app.ref:{LEAKY_PASSWORD}@[::1/postgres?sslmode=require",
         f"not-a-url-{LEAKY_PASSWORD}",
