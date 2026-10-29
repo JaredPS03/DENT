@@ -9,6 +9,9 @@ from datetime import datetime, timedelta
 from typing import Literal, get_args
 
 CUSTOMER_SERVICE_WINDOW = timedelta(hours=24)
+# Meta's code for "more than 24 hours since the customer last replied", reused when Axon does not
+# send a free message because the window closed, and for held messages that expire.
+WINDOW_CLOSED_CODE = 131047
 # A free message sent right at the edge could reach Meta after the window closed.
 SEND_MARGIN = timedelta(minutes=2)
 

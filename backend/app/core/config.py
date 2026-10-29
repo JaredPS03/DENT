@@ -78,6 +78,26 @@ class Settings(BaseSettings):
     # the one `pnpm db:start` prints (http://127.0.0.1:54321).
     supabase_url: str = Field(min_length=1)
 
+    # Temporary echo bot of milestone 1B: answers "Eco: …" to test the round trip with Meta's test
+    # number. Never in production.
+    echo_bot_enabled: bool = False
+
+    # Voice notes to text (OpenAI gpt-transcribe, which does not train on the audio nor keep it;
+    # decision 006). Without a key, audios are stored but not transcribed.
+    transcription_api_key: SecretStr | None = None
+    transcription_model: str = Field(default="gpt-transcribe", pattern=r"^[a-z0-9][a-z0-9.-]{0,63}$")
+
+    # Supabase Storage through its S3 protocol, for the private bucket of audios and photos. These
+    # keys reach Storage only, not the database (decision 006). Locally, `pnpm supabase status`
+    # prints them.
+    storage_s3_endpoint: str | None = None
+    storage_s3_region: str = Field(default="local", pattern=r"^[a-z0-9-]{1,32}$")
+    storage_s3_access_key_id: SecretStr | None = None
+    storage_s3_secret_access_key: SecretStr | None = None
+
+    # Jobs one worker handles at once.
+    worker_concurrency: int = Field(default=4, ge=1, le=32)
+
     sentry_dsn: SecretStr | None = None
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
@@ -135,10 +155,42 @@ class Settings(BaseSettings):
     def _empty_as_none(cls, value: object) -> object:
         return None if value == "" else value
 
-    @field_validator("sentry_dsn", mode="before")
+    @field_validator(
+        "sentry_dsn",
+        "transcription_api_key",
+        "storage_s3_endpoint",
+        "storage_s3_access_key_id",
+        "storage_s3_secret_access_key",
+        mode="before",
+    )
     @classmethod
-    def _empty_dsn_as_none(cls, value: object) -> object:
+    def _empty_as_unset(cls, value: object) -> object:
         return None if value == "" else value
+
+    @field_validator("echo_bot_enabled")
+    @classmethod
+    def _no_echo_in_production(cls, value: bool, info: ValidationInfo) -> bool:
+        if value and info.data.get("environment") is Environment.PRODUCTION:
+            raise _problem("the echo bot is for testing; it cannot run in production")
+        return value
+
+    @field_validator("storage_s3_endpoint")
+    @classmethod
+    def _validate_storage_endpoint(cls, value: str | None, info: ValidationInfo) -> str | None:
+        if value is None:
+            return None
+        parts = urlsplit(value)
+        if parts.scheme not in ("http", "https") or not parts.hostname or parts.query or parts.fragment:
+            raise _problem("it must look like https://<project-ref>.storage.supabase.co/storage/v1/s3")
+        if info.data.get("environment") not in (None, Environment.DEVELOPMENT) and parts.scheme != "https":
+            raise _problem("outside development it must use https")
+        return value.rstrip("/")
+
+    @property
+    def media_storage_configured(self) -> bool:
+        return bool(
+            self.storage_s3_endpoint and self.storage_s3_access_key_id and self.storage_s3_secret_access_key
+        )
 
 
 def load_settings(env_file: str | None = ".env") -> Settings:

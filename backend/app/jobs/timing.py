@@ -20,8 +20,14 @@ def burst_ready(first_at: datetime, last_at: datetime, now: datetime) -> bool:
     return now - last_at >= BURST_QUIET or now - first_at >= BURST_MAX_WAIT
 
 
+def seconds_until_ready(first_at: datetime, last_at: datetime, now: datetime) -> float:
+    """How long until `burst_ready` turns true, if nothing else arrives."""
+    ready_at = min(last_at + BURST_QUIET, first_at + BURST_MAX_WAIT)
+    return max(0.0, (ready_at - now).total_seconds())
+
+
 def backoff_seconds(attempt: int, jitter: float) -> float:
     """Wait before retry number `attempt` (1, 2, …). `jitter` in [0, 1) spreads retries of jobs
     that failed together, such as during a Meta outage."""
-    delay = min(_BACKOFF_BASE_SECONDS * 2 ** (attempt - 1), _BACKOFF_CAP_SECONDS)
+    delay: float = min(_BACKOFF_BASE_SECONDS * 2.0 ** (attempt - 1), _BACKOFF_CAP_SECONDS)
     return delay * (1 + _JITTER * jitter) if delay < _BACKOFF_CAP_SECONDS else delay

@@ -5,7 +5,14 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.jobs.timing import BURST_MAX_WAIT, BURST_QUIET, MAX_ATTEMPTS, backoff_seconds, burst_ready
+from app.jobs.timing import (
+    BURST_MAX_WAIT,
+    BURST_QUIET,
+    MAX_ATTEMPTS,
+    backoff_seconds,
+    burst_ready,
+    seconds_until_ready,
+)
 from app.whatsapp.phones import normalize_bsuid, normalize_phone, recipient_fields
 from app.whatsapp.window import (
     CUSTOMER_SERVICE_WINDOW,
@@ -165,3 +172,13 @@ def test_retries_back_off_exponentially_up_to_a_cap() -> None:
     assert delays == sorted(delays)
     assert max(delays) == 300.0
     assert backoff_seconds(3, jitter=0.999) < 20.0 * 1.2
+
+
+def test_a_turn_knows_when_to_come_back() -> None:
+    first = NOW
+    last = NOW + timedelta(seconds=2)
+    assert seconds_until_ready(first, last, last) == BURST_QUIET.total_seconds()
+    assert seconds_until_ready(first, last, last + BURST_QUIET) == 0.0
+    # A patient typing for a long time: the cap from their first message wins.
+    late = NOW + BURST_MAX_WAIT - timedelta(seconds=1)
+    assert seconds_until_ready(first, late, late) == 1.0

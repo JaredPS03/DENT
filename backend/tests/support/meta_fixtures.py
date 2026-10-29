@@ -16,7 +16,7 @@ EXAMPLE_USER_PHONE = "16505551234"
 EXAMPLE_BSUID = "US.13491208655302741918"
 
 
-def meta_payload(  # noqa: PLR0913 - one override per identifier
+def meta_payload(
     name: str,
     *,
     phone_number_id: str,
@@ -44,7 +44,9 @@ def meta_payload(  # noqa: PLR0913 - one override per identifier
                     if message_id is not None:
                         item["id"] = message_id
                     if timestamp is not None:
-                        item["timestamp"] = str(timestamp) if isinstance(item["timestamp"], str) else timestamp
+                        item["timestamp"] = (
+                            str(timestamp) if isinstance(item["timestamp"], str) else timestamp
+                        )
                     if extra:
                         item.update(copy.deepcopy(extra))
     return payload

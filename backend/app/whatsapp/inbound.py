@@ -213,7 +213,7 @@ def _single(payload: dict[str, Any], list_name: str) -> dict[str, Any]:
     return items[0]
 
 
-def _content(message: _Message) -> tuple[MessageType, str | None, str | None]:
+def _content(message: _Message) -> tuple[MessageType, str | None, str | None]:  # noqa: PLR0911
     """Type, readable text and the id of a chosen option."""
     match message.type:
         case "text" if message.text:
@@ -222,7 +222,7 @@ def _content(message: _Message) -> tuple[MessageType, str | None, str | None]:
             return "audio", None, None
         case "image" | "document":
             media = message.image if message.type == "image" else message.document
-            return message.type, (media.caption or None) if media else None, None  # type: ignore[return-value]
+            return message.type, (media.caption or None) if media else None, None
         case "button" if message.button:
             return "button", message.button.text, _bounded(message.button.payload)
         case "interactive" if message.interactive:

@@ -29,7 +29,7 @@ La especificación no fija cada cuánto se ofrecen horarios ni con cuánta antic
 
   Una sesión válida nunca gasta el cupo de la dirección: detrás del proxy del hosting, todos los consultorios pueden llegar con la misma.
   - El limitador barre las llaves inactivas como mucho una vez por ventana. Con 10 000 llaves activas rechaza las nuevas, para que nadie lo vuelva lento rotando direcciones.
-- Los cuerpos tienen un tope de 16 KB en todas las rutas salvo el webhook de WhatsApp, que tiene el suyo de 1 MB. Así lo heredan también las rutas futuras. Un middleware responde 413 antes de leer el cuerpo, también si llega por partes sin `Content-Length`, y compara la ruta sin el `root_path` del servidor. Hace falta porque FastAPI lee y parsea el cuerpo antes de verificar la sesión.
+- Los cuerpos tienen un tope de 16 KB en todas las rutas salvo el webhook de WhatsApp, que tiene el suyo de 1 MB (3 MB desde la decisión 006). Así lo heredan también las rutas futuras. Un middleware responde 413 antes de leer el cuerpo, también si llega por partes sin `Content-Length`, y compara la ruta sin el `root_path` del servidor. Hace falta porque FastAPI lee y parsea el cuerpo antes de verificar la sesión.
 
 **Agenda**
 - Horarios cada 15 minutos.

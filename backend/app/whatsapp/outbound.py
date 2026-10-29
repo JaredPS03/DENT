@@ -111,7 +111,9 @@ def template(name: str, language: str, body_parameters: Sequence[str] = ()) -> d
         for value in body_parameters:
             # Meta rejects empty parameters, and new lines or tabs inside them.
             if not value.strip() or any(char in value for char in "\n\t"):
-                raise InvalidOutboundError("un parámetro de plantilla no puede ir vacío ni con saltos de línea")
+                raise InvalidOutboundError(
+                    "un parámetro de plantilla no puede ir vacío ni con saltos de línea"
+                )
             _check_length("un parámetro de plantilla", value, MAX_TEMPLATE_PARAMETER)
         message["components"] = [
             {"type": "body", "parameters": [{"type": "text", "text": value} for value in body_parameters]}

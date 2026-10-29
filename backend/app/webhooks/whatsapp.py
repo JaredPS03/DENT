@@ -1,10 +1,11 @@
 """WhatsApp Cloud API webhook.
 
-GET verifies the subscription. POST, in this order: caps the body at 1 MB, validates
-X-Hub-Signature-256 on the raw bytes, parses, routes each item to its clinic and stores it in
-webhook_events. Nothing heavy happens here: Meta gets its 200 right away. Processing and
-queueing arrive in milestone 1B. If the database does not answer within the deadline, Meta gets
-a 503 and retries later; stored items are deduplicated, so a retry never duplicates them.
+GET verifies the subscription. POST, in this order: caps the body at 3 MB (the largest payload
+Meta documents), validates X-Hub-Signature-256 on the raw bytes, parses, routes each item to its
+clinic, stores it in webhook_events and queues its id for the worker, in the same transaction.
+Nothing heavy happens here: Meta gets its 200 right away. If the database does not answer within
+the deadline, Meta gets a 503 and retries later; stored items are deduplicated, so a retry never
+duplicates them.
 """
 
 import hmac
@@ -30,7 +31,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
-MAX_BODY_BYTES = 1024 * 1024
+# Meta sends up to 1000 updates per notification and documents payloads of up to 3 MB.
+MAX_BODY_BYTES = 3 * 1024 * 1024
 # Routing and storing one webhook never takes longer than this, even if the database hangs.
 STORE_DEADLINE_SECONDS = 8.0
 _CHALLENGE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")

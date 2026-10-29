@@ -17,7 +17,13 @@ import httpx
 
 from app.core.config import Environment, SettingsError, load_settings
 from app.core.logs import mask_message_id, mask_phone
-from app.whatsapp.client import RecipientNotAllowedError, WhatsAppApiError, WhatsAppClient
+from app.whatsapp.client import (
+    NotSentError,
+    OutcomeUnknownError,
+    RecipientNotAllowedError,
+    WhatsAppApiError,
+    WhatsAppClient,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -66,8 +72,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     except WhatsAppApiError as exc:
         print(f"No se envió: {exc}. Revisa el token, el número y que el destino esté verificado en Meta.")
         return 1
-    except httpx.HTTPError as exc:
-        print(f"No se envió: no hubo conexión con Meta ({type(exc).__name__}).")
+    except NotSentError as exc:
+        print(f"No se envió: no hubo conexión con Meta ({exc}).")
+        return 1
+    except OutcomeUnknownError:
+        print("Meta no contestó a tiempo: revisa en el teléfono si llegó antes de volver a intentar.")
         return 1
     return 2
 

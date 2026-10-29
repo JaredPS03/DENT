@@ -152,7 +152,10 @@ def test_text_over_meta_limit_is_refused() -> None:
 
 def test_reply_buttons_follow_meta_limits() -> None:
     message = outbound.buttons("¿Te queda bien?", [Option("yes", "Sí"), Option("no", "No")])
-    assert message["interactive"]["action"]["buttons"][0] == {"type": "reply", "reply": {"id": "yes", "title": "Sí"}}
+    assert message["interactive"]["action"]["buttons"][0] == {
+        "type": "reply",
+        "reply": {"id": "yes", "title": "Sí"},
+    }
     with pytest.raises(InvalidOutboundError, match="de 1 a 3"):
         outbound.buttons("x", [Option(str(i), str(i)) for i in range(4)])
     with pytest.raises(InvalidOutboundError, match="20"):
@@ -185,7 +188,10 @@ def test_templates_with_positional_parameters() -> None:
             "components": [
                 {
                     "type": "body",
-                    "parameters": [{"type": "text", "text": "Ana"}, {"type": "text", "text": "Clínica Sonrisa"}],
+                    "parameters": [
+                        {"type": "text", "text": "Ana"},
+                        {"type": "text", "text": "Clínica Sonrisa"},
+                    ],
                 }
             ],
         },

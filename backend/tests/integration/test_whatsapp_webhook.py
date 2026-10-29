@@ -25,6 +25,7 @@ from tests.conftest import (
 from tests.integration.conftest import FreezableProxy, rows_as_clinic
 
 URL = "/webhooks/whatsapp"
+MAX_BODY_BYTES = whatsapp_webhook.MAX_BODY_BYTES
 
 
 def _events(database_url: str, clinic_id: UUID, meta_id: str) -> list[tuple[Any, ...]]:
@@ -135,22 +136,22 @@ def test_signature_is_checked_before_parsing(client: TestClient) -> None:
 # Size --------------------------------------------------------------------------------------------
 
 
-def test_body_over_one_megabyte_is_rejected(client: TestClient) -> None:
-    body = b"x" * (1024 * 1024 + 1)
+def test_body_over_three_megabytes_is_rejected(client: TestClient) -> None:
+    body = b"x" * (MAX_BODY_BYTES + 1)
     assert client.post(URL, content=body, headers={"x-hub-signature-256": sign(body)}).status_code == 413
 
 
-def test_chunked_body_over_one_megabyte_is_rejected(client: TestClient) -> None:
+def test_chunked_body_over_three_megabytes_is_rejected(client: TestClient) -> None:
     def chunks() -> Iterator[bytes]:
-        for _ in range(17):
+        for _ in range(3 * 16 + 1):
             yield b"x" * (64 * 1024)
 
     response = client.post(URL, content=chunks(), headers={"x-hub-signature-256": "sha256=" + "0" * 64})
     assert response.status_code == 413
 
 
-def test_body_of_exactly_one_megabyte_is_read(client: TestClient) -> None:
-    body = b" " * (1024 * 1024)
+def test_body_of_exactly_three_megabytes_is_read(client: TestClient) -> None:
+    body = b" " * MAX_BODY_BYTES
     # Within the limit: it gets to the signature check, which fails.
     assert (
         client.post(URL, content=body, headers={"x-hub-signature-256": "sha256=" + "0" * 64}).status_code
@@ -174,6 +175,52 @@ def test_duplicate_event_is_stored_once(client: TestClient, database_url: str, w
     assert _post(client, payload) == 200
     assert _post(client, payload) == 200
     assert len(_events(database_url, CLINIC_A, wamid)) == 1
+
+
+def _jobs_for(database_url: str, clinic_id: UUID, meta_id: str) -> list[tuple[Any, ...]]:
+    """Queued jobs of the items stored for `meta_id`: only their ids travel in the queue."""
+    return rows_as_clinic(
+        database_url,
+        clinic_id,
+        """
+        select q.message from public.webhook_events e
+        join pgmq.q_whatsapp_inbound q on q.message @> jsonb_build_object('event_id', e.id::text)
+        where e.meta_id = %s
+        """,
+        (meta_id,),
+    )
+
+
+def test_each_stored_item_is_queued_once_with_ids_only(
+    client: TestClient, database_url: str, wamid: str
+) -> None:
+    payload = webhook_payload(message_change(PHONE_NUMBER_ID_A, wamid, text="Me duele una muela"))
+    assert _post(client, payload) == 200
+    assert _post(client, payload) == 200  # Meta retried
+
+    [(job,)] = _jobs_for(database_url, CLINIC_A, wamid)
+    assert set(job) == {"kind", "clinic_id", "event_id"}
+    assert (job["kind"], job["clinic_id"]) == ("event", str(CLINIC_A))
+    assert "muela" not in str(job)
+
+
+def test_items_kept_only_as_a_trace_are_not_queued(client: TestClient, database_url: str) -> None:
+    field = f"future_field_{uuid4().hex[:8]}"
+    payload = webhook_payload(
+        {"field": field, "value": {"metadata": {"phone_number_id": PHONE_NUMBER_ID_A}, "x": uuid4().hex}}
+    )
+    assert _post(client, payload) == 200
+    queued = rows_as_clinic(
+        database_url,
+        CLINIC_A,
+        """
+        select count(*) from public.webhook_events e
+        join pgmq.q_whatsapp_inbound q on q.message @> jsonb_build_object('event_id', e.id::text)
+        where e.field = %s
+        """,
+        (field,),
+    )
+    assert queued == [(0,)]
 
 
 def test_each_delivery_status_is_stored_once(client: TestClient, database_url: str, wamid: str) -> None:

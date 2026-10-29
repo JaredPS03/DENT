@@ -18,7 +18,7 @@ class _BodyTooLargeError(Exception):
     pass
 
 
-# Routes that cap their own body: Meta's webhook allows up to 1 MB and checks it while reading.
+# Routes that cap their own body: Meta's webhook allows up to 3 MB and checks it while reading.
 EXEMPT_PATHS = ("/webhooks/whatsapp",)
 
 
