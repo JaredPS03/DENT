@@ -12,11 +12,13 @@ number quality) carry no phone number id; milestone 1D decides how to route them
 Confirmed field names (Meta's official sample app fbsamples/whatsapp-business-jaspers-market and
 the official Node SDK): object, entry[].id, entry[].changes[].field and .value,
 value.metadata.phone_number_id, value.messages[].id, value.statuses[].id and .status.
-Only the `messages` field keeps its content. Any other change for a known number (coexistence
-echoes, history or contact sync, fields Meta adds later) is recorded as 'other' WITHOUT its
-content: the spec says to store only what it asks for, and a contact sync would bring people
-who are not patients. A field joins the list once it is confirmed in Meta's documentation and
-something processes it (coexistence echoes, milestone 1B).
+Only two fields keep their content: `messages` (messages and delivery statuses) and
+`smb_message_echoes` (what the clinic sends from its WhatsApp Business app, under coexistence;
+field and `message_echoes` list confirmed in Meta's smb_message_echoes reference). Any other change
+for a known number (history or contact sync, fields Meta adds later) is recorded as 'other'
+WITHOUT its content: the spec says to store only what it asks for, and a contact sync would bring
+people who are not patients. A field joins the list once it is confirmed in Meta's documentation
+and something processes it.
 """
 
 import hashlib
@@ -26,7 +28,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-ItemKind = Literal["message", "status", "other"]
+ItemKind = Literal["message", "status", "message_echo", "other"]
 
 
 class _MetaModel(BaseModel):
@@ -51,6 +53,7 @@ class ChangeValue(_MetaModel):
     metadata: Metadata | None = None
     messages: list[MessageItem] = []
     statuses: list[StatusItem] = []
+    message_echoes: list[MessageItem] = []
 
 
 class Change(_MetaModel):
@@ -87,12 +90,12 @@ class UnroutableChange:
     field: str
 
 
-# The only webhook field whose content is stored, and the lists it carries.
-CONTENT_FIELD = "messages"
-_ITEM_LISTS: tuple[tuple[str, ItemKind], ...] = (
-    ("messages", "message"),
-    ("statuses", "status"),
-)
+# The webhook fields whose content is stored, and the lists each one carries.
+_ITEM_LISTS: dict[str, tuple[tuple[str, ItemKind], ...]] = {
+    "messages": (("messages", "message"), ("statuses", "status")),
+    "smb_message_echoes": (("message_echoes", "message_echo"),),
+}
+_DEDUP_PREFIX: dict[ItemKind, str] = {"message": "msg", "message_echo": "echo"}
 
 REPLACEMENT_CHARACTER = "\ufffd"
 
@@ -136,10 +139,11 @@ def split_payload(raw: dict[str, Any]) -> tuple[list[WebhookItem], list[Unroutab
                 continue
             phone_number_id = change.value.metadata.phone_number_id
             raw_value: dict[str, Any] = raw["entry"][entry_index]["changes"][change_index]["value"]
-            common = {k: v for k, v in raw_value.items() if k not in {name for name, _ in _ITEM_LISTS}}
+            lists = _ITEM_LISTS.get(change.field, ())
+            common = {k: v for k, v in raw_value.items() if k not in {name for name, _ in lists}}
 
             found = False
-            for list_name, kind in _ITEM_LISTS if change.field == CONTENT_FIELD else ():
+            for list_name, kind in lists:
                 parsed_list = getattr(change.value, list_name)
                 for position, parsed in enumerate(parsed_list):
                     found = True
@@ -147,7 +151,7 @@ def split_payload(raw: dict[str, Any]) -> tuple[list[WebhookItem], list[Unroutab
                     if kind == "status":
                         dedup_key = f"status:{parsed.id}:{parsed.status}"
                     else:
-                        dedup_key = f"msg:{parsed.id}"
+                        dedup_key = f"{_DEDUP_PREFIX[kind]}:{parsed.id}"
                     items.append(
                         WebhookItem(
                             phone_number_id=phone_number_id,
