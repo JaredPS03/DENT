@@ -148,7 +148,7 @@ class EchoMessage:
 def read_message(payload: dict[str, Any], received_at: datetime) -> InboundMessage:
     try:
         message = _Message.read(_single(payload, "messages"))
-        contact = _Contact.model_validate((payload.get("contacts") or [{}])[0])
+        contact = _sender_contact(message, payload.get("contacts"))
     except (ValidationError, TypeError, IndexError, AttributeError) as exc:
         raise UnreadableItemError("incoming message") from exc
     message_type, content, reply_id = _content(message)
@@ -204,6 +204,20 @@ def read_echo(payload: dict[str, Any], received_at: datetime) -> EchoMessage:
         type=message_type,
         content=content or None,
     )
+
+
+def _sender_contact(message: _Message, raw_contacts: Any) -> _Contact:
+    """The contact block of the message's sender. One change can list several contacts: one that
+    does not match the sender is never used, so nobody's id lands on someone else's record."""
+    contacts = [_Contact.model_validate(raw) for raw in raw_contacts or []]
+    for contact in contacts:
+        if (message.from_ and normalize_phone(contact.wa_id) == normalize_phone(message.from_)) or (
+            message.from_user_id and contact.user_id == message.from_user_id
+        ):
+            return contact
+    if len(contacts) == 1 and not message.from_ and not message.from_user_id:
+        return contacts[0]
+    return _Contact()
 
 
 def _single(payload: dict[str, Any], list_name: str) -> dict[str, Any]:

@@ -23,7 +23,7 @@ from app.db import conversations as db
 from app.db.media_store import MediaStoreError, media_path
 from app.jobs.context import WorkerContext
 from app.jobs.queue import ConversationJob, ExpireHoldJob, enqueue
-from app.jobs.timing import burst_ready, seconds_until_ready
+from app.jobs.timing import burst_ready
 from app.whatsapp import outbound
 from app.whatsapp.client import (
     RECIPIENT_NOT_ALLOWED_CODE,
@@ -46,8 +46,11 @@ logger = logging.getLogger(__name__)
 
 # Longer than the slowest step of a turn; renewed before every call outside.
 LEASE_SECONDS = 120
-# Another worker holds the conversation: look again shortly.
-LEASE_BUSY_RETRY_SECONDS = 2
+# One turn takes care of at most this many patient messages; the rest go to the next turn.
+MAX_BATCH = 20
+# ...and transcribes at most this many voice notes (each one is paid): a flood of audios is
+# stored, and only the first ones are transcribed.
+MAX_TRANSCRIPTIONS_PER_TURN = 5
 
 KeepAlive = Callable[[], Awaitable[None]]
 
@@ -77,11 +80,10 @@ async def handle_conversation(
     lease = _Lease(job.clinic_id, job.conversation_id, uuid4())
     async with ctx.db.clinic_transaction(lease.clinic_id) as conn:
         outcome = await db.acquire_lease(conn, lease.conversation_id, lease.token, LEASE_SECONDS)
-        if outcome == "busy":
-            # Never dropped: the worker holding it may already be past the message that brought
-            # this job. A new job (not a retry) comes back shortly.
-            await enqueue(conn, job, delay_seconds=LEASE_BUSY_RETRY_SECONDS)
     if outcome != "acquired":
+        # Busy: this job is done. Whoever holds the lease looks again before letting it go
+        # (_release), so nothing this job came for is left behind, and a burst of messages never
+        # turns into a pile of jobs knocking every few seconds.
         return
 
     async def renew() -> None:
@@ -94,13 +96,40 @@ async def handle_conversation(
         await _flush_outbox(ctx, lease, renew)
         if await _answer(ctx, lease, renew, final_attempt=final_attempt):
             await _flush_outbox(ctx, lease, renew)
-    finally:
-        try:
-            async with ctx.db.clinic_transaction(lease.clinic_id) as conn:
-                await db.release_lease(conn, lease.conversation_id, lease.token)
-        except Exception:
-            # It expires on its own.
-            logger.warning("jobs.lease_release_failed", extra={"conversation_id": str(lease.conversation_id)})
+    except BaseException:
+        # The job is retried later and finds whatever is still pending then.
+        await _release_quietly(ctx, lease)
+        raise
+    # A failure here retries the job: something may be waiting that nobody else will pick up.
+    await _release(ctx, lease)
+
+
+async def _release(ctx: WorkerContext, lease: _Lease) -> None:
+    """Lets the conversation go, and schedules another turn if work arrived meanwhile.
+
+    The conversation row is locked first. A job that found the lease busy took and released that
+    same lock before, so whatever it came for (a message, a queued reply) is already committed
+    and visible to the checks that follow."""
+    async with ctx.db.clinic_transaction(lease.clinic_id) as conn:
+        if await db.conversation_for_update(conn, lease.conversation_id) is None:
+            return
+        follow_up = await db.pending_work(conn, lease.conversation_id)
+        await db.release_lease(conn, lease.conversation_id, lease.token)
+        if follow_up is not None:
+            await enqueue(
+                conn,
+                ConversationJob(clinic_id=lease.clinic_id, conversation_id=lease.conversation_id),
+                delay_seconds=math.ceil(follow_up),
+            )
+
+
+async def _release_quietly(ctx: WorkerContext, lease: _Lease) -> None:
+    try:
+        async with ctx.db.clinic_transaction(lease.clinic_id) as conn:
+            await db.release_lease(conn, lease.conversation_id, lease.token)
+    except Exception:
+        # It expires on its own.
+        logger.warning("jobs.lease_release_failed", extra={"conversation_id": str(lease.conversation_id)})
 
 
 async def handle_expire_hold(ctx: WorkerContext, job: ExpireHoldJob) -> None:
@@ -116,25 +145,24 @@ async def _answer(ctx: WorkerContext, lease: _Lease, renew: KeepAlive, *, final_
     """Takes care of the patient's pending messages once their burst is over. True if a reply was
     queued."""
     async with ctx.db.clinic_transaction(lease.clinic_id) as conn:
-        batch, now = await db.unhandled_inbound(conn, lease.conversation_id)
+        batch, now = await db.unhandled_inbound(conn, lease.conversation_id, limit=MAX_BATCH)
     if not batch:
         return False
     arrivals = [message.created_at for message in batch]
-    if not burst_ready(min(arrivals), max(arrivals), now):
-        # The patient is still typing: come back when the burst is over. The latest message's own
-        # job is due then too; whichever runs second finds nothing left to answer.
-        wait = seconds_until_ready(min(arrivals), max(arrivals), now)
-        async with ctx.db.clinic_transaction(lease.clinic_id) as conn:
-            await enqueue(
-                conn,
-                ConversationJob(clinic_id=lease.clinic_id, conversation_id=lease.conversation_id),
-                delay_seconds=math.ceil(wait),
-            )
+    if len(batch) < MAX_BATCH and not burst_ready(min(arrivals), max(arrivals), now):
+        # The patient is still typing: _release schedules the turn for when the burst is over.
         return False
 
-    batch = [
-        await _prepare_media(ctx, lease, message, renew, final_attempt=final_attempt) for message in batch
-    ]
+    transcriptions_left = MAX_TRANSCRIPTIONS_PER_TURN
+    prepared: list[db.PendingMessage] = []
+    for message in batch:
+        ready = await _prepare_media(
+            ctx, lease, message, renew, final_attempt=final_attempt, transcribe=transcriptions_left > 0
+        )
+        if ready.transcription is not None and message.transcription is None:
+            transcriptions_left -= 1
+        prepared.append(ready)
+    batch = prepared
 
     async with ctx.db.clinic_transaction(lease.clinic_id) as conn:
         if not await db.holds_lease(conn, lease.conversation_id, lease.token):
@@ -180,8 +208,14 @@ def _bot_answers(
     )
 
 
-async def _prepare_media(
-    ctx: WorkerContext, lease: _Lease, message: db.PendingMessage, renew: KeepAlive, *, final_attempt: bool
+async def _prepare_media(  # noqa: PLR0913 - the turn's state, passed explicitly
+    ctx: WorkerContext,
+    lease: _Lease,
+    message: db.PendingMessage,
+    renew: KeepAlive,
+    *,
+    final_attempt: bool,
+    transcribe: bool,
 ) -> db.PendingMessage:
     """Brings the file from Meta to the private bucket and transcribes voice notes. A file that can
     never be fetched is given up; a temporary failure retries the turn, except on its last attempt,
@@ -197,7 +231,7 @@ async def _prepare_media(
         try:
             media = await ctx.media_source.download(message.meta_media_id)
             path = media_path(lease.clinic_id, lease.conversation_id, message.id, media.extension)
-            await ctx.media_store.put(path, media.content, media.mime_type)
+            await ctx.media_store.put(lease.clinic_id, path, media.content, media.mime_type)
         except MediaRejectedError as rejected:
             logger.warning(
                 "whatsapp.media_rejected", extra={"message_id": str(message.id), "reason": str(rejected)}
@@ -214,7 +248,13 @@ async def _prepare_media(
         message = replace(message, meta_media_id=None, media_path=path)
         content = media.content
 
-    if message.type == "audio" and message.transcription is None and message.media_path and ctx.transcriber:
+    if (
+        transcribe
+        and message.type == "audio"
+        and message.transcription is None
+        and message.media_path
+        and ctx.transcriber
+    ):
         return await _transcribe(ctx, lease, message, content, renew, final_attempt=final_attempt)
     return message
 
@@ -235,7 +275,7 @@ async def _transcribe(  # noqa: PLR0913 - the turn's state, passed explicitly
     await renew()
     try:
         if content is None and ctx.media_store is not None:
-            content = await ctx.media_store.get(message.media_path)
+            content = await ctx.media_store.get(lease.clinic_id, message.media_path)
         if content is None:
             return message
         text = await ctx.transcriber.transcribe(content, mime_type, extension)
@@ -267,6 +307,9 @@ async def _set_media(ctx: WorkerContext, lease: _Lease, message_id: UUID, path: 
 async def _flush_outbox(ctx: WorkerContext, lease: _Lease, renew: KeepAlive) -> None:
     """Sends the conversation's queued messages in order, each at most once."""
     while True:
+        # Renewed before claiming: between the claim and the call to Meta nothing may fail, or the
+        # message would stay claimed without ever leaving.
+        await renew()
         async with ctx.db.clinic_transaction(lease.clinic_id) as conn:
             if not await db.holds_lease(conn, lease.conversation_id, lease.token):
                 raise LeaseLostError
@@ -281,7 +324,6 @@ async def _flush_outbox(ctx: WorkerContext, lease: _Lease, renew: KeepAlive) -> 
                 continue
             await db.mark_send_started(conn, item.id)
 
-        await renew()
         assert item.phone_number_id is not None  # noqa: S101 - checked by _refusal
         assert item.send_payload is not None  # noqa: S101
         try:

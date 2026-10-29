@@ -10,7 +10,7 @@ import pytest
 
 from app.core.config import Settings
 from app.db.media_store import BUCKET, MediaStoreError, S3MediaStore, media_path
-from tests.conftest import CLINIC_A, make_settings
+from tests.conftest import CLINIC_A, CLINIC_B, make_settings
 
 pytestmark = pytest.mark.anyio
 
@@ -57,15 +57,15 @@ async def test_a_file_goes_into_the_private_bucket_and_comes_back(storage_settin
     store = S3MediaStore(storage_settings)
     path = media_path(CLINIC_A, uuid4(), uuid4(), "ogg")
     content = b"OggS\x00" + os.urandom(64)
-    await store.put(path, content, "audio/ogg")
-    assert await store.get(path) == content
+    await store.put(CLINIC_A, path, content, "audio/ogg")
+    assert await store.get(CLINIC_A, path) == content
     assert BUCKET == "whatsapp-media"
 
 
 async def test_the_bucket_refuses_types_outside_its_list(storage_settings: Settings) -> None:
     store = S3MediaStore(storage_settings)
     with pytest.raises(MediaStoreError):
-        await store.put(media_path(CLINIC_A, uuid4(), uuid4(), "html"), b"<script>", "text/html")
+        await store.put(CLINIC_A, media_path(CLINIC_A, uuid4(), uuid4(), "html"), b"<script>", "text/html")
 
 
 async def test_wrong_keys_get_nothing(storage_settings: Settings) -> None:
@@ -75,4 +75,16 @@ async def test_wrong_keys_get_nothing(storage_settings: Settings) -> None:
         )
     )
     with pytest.raises(MediaStoreError):
-        await store.put(media_path(CLINIC_A, uuid4(), uuid4(), "ogg"), b"OggS", "audio/ogg")
+        await store.put(CLINIC_A, media_path(CLINIC_A, uuid4(), uuid4(), "ogg"), b"OggS", "audio/ogg")
+
+
+async def test_a_path_of_another_clinic_is_refused_before_reaching_storage(
+    storage_settings: Settings,
+) -> None:
+    store = S3MediaStore(storage_settings)
+    other = media_path(CLINIC_B, uuid4(), uuid4(), "ogg")
+    for path in (other, f"{CLINIC_A}/../{other}", f"{CLINIC_A}//x.ogg"):
+        with pytest.raises(ValueError, match="does not belong"):
+            await store.put(CLINIC_A, path, b"OggS", "audio/ogg")
+        with pytest.raises(ValueError, match="does not belong"):
+            await store.get(CLINIC_A, path)

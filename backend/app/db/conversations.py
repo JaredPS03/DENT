@@ -2,6 +2,7 @@
 Database.clinic_transaction, so RLS already limits it to that clinic; nothing here receives a
 clinic id it did not get from there."""
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -11,8 +12,11 @@ from uuid import UUID
 from psycopg import AsyncConnection, errors
 from psycopg.types.json import Jsonb
 
+from app.jobs.timing import seconds_until_ready
 from app.whatsapp.inbound import EchoMessage, InboundMessage
 from app.whatsapp.window import CUSTOMER_SERVICE_WINDOW, WINDOW_CLOSED_CODE, BillingCategory, DeliveryStatus
+
+logger = logging.getLogger(__name__)
 
 # A message held for a closed window waits this long for the patient to come back.
 HOLD_TTL = CUSTOMER_SERVICE_WINDOW
@@ -73,19 +77,29 @@ async def find_or_create_patient(
     conn: AsyncConnection, clinic_id: UUID, phone: str | None, bsuid: str | None
 ) -> UUID:
     """The patient behind a WhatsApp user, created on their first message. The BSUID is the
-    stronger key (a username can hide the phone); each identifier fills in the other if missing."""
+    stronger key (a username can hide the phone); each identifier fills in the other if missing.
+
+    A known phone arriving with a different BSUID is another person: Meta gives a new BSUID to
+    whoever gets a recycled number. The old patient keeps their record (and BSUID) but loses the
+    phone, and the newcomer gets a record of their own: never someone else's chat or appointments.
+    """
     if phone is None and bsuid is None:
         raise ValueError("a patient needs a phone or a BSUID")
     by_bsuid = await _patient_by(conn, "bsuid", bsuid)
-    by_phone = await _patient_by(conn, "phone", phone)
-    found = by_bsuid or by_phone
-    if found is not None:
-        patient_id, known_phone, known_bsuid = found
-        if bsuid and known_bsuid is None:
-            await _fill_in(conn, patient_id, "bsuid", bsuid)
-        if phone and known_phone is None and by_phone is None:
+    if by_bsuid is not None:
+        patient_id, known_phone, _ = by_bsuid
+        if phone and known_phone is None and await _patient_by(conn, "phone", phone) is None:
             await _fill_in(conn, patient_id, "phone", phone)
         return patient_id
+    by_phone = await _patient_by(conn, "phone", phone)
+    if by_phone is not None:
+        patient_id, _, known_bsuid = by_phone
+        if bsuid is None or known_bsuid is None:
+            if bsuid:
+                await _fill_in(conn, patient_id, "bsuid", bsuid)
+            return patient_id
+        await conn.execute("update public.patients set phone = null where id = %s", (patient_id,))
+        logger.warning("whatsapp.phone_reassigned", extra={"previous_patient_id": str(patient_id)})
 
     cursor = await conn.execute(
         """
@@ -103,6 +117,11 @@ async def find_or_create_patient(
     if again is None:
         raise LookupError("the patient is not there right after a conflicting insert")
     return again[0]
+
+
+async def find_patient(conn: AsyncConnection, phone: str) -> UUID | None:
+    found = await _patient_by(conn, "phone", phone)
+    return found[0] if found else None
 
 
 async def _patient_by(
@@ -276,7 +295,7 @@ async def insert_echo(
 
 
 async def unhandled_inbound(
-    conn: AsyncConnection, conversation_id: UUID
+    conn: AsyncConnection, conversation_id: UUID, *, limit: int
 ) -> tuple[list[PendingMessage], datetime]:
     """The patient's messages no turn has taken care of, in the order the patient sent them (Meta's
     webhooks may arrive out of order), and the database's clock, the one that also timed the queue."""
@@ -287,12 +306,43 @@ async def unhandled_inbound(
         from public.messages
         where conversation_id = %s and direction = 'inbound' and handled_at is null
         order by occurred_at, created_at, id
+        limit %s
         """,
-        (conversation_id,),
+        (conversation_id, limit),
     )
     rows = await cursor.fetchall()
     now = rows[0][-1] if rows else await _now(conn)
     return [PendingMessage(*row[:-1]) for row in rows], now
+
+
+async def pending_work(conn: AsyncConnection, conversation_id: UUID) -> float | None:
+    """Seconds until the conversation needs another turn, or None if nothing is waiting: a message
+    queued to send (now), or patient messages not taken care of (once their burst is over)."""
+    cursor = await conn.execute(
+        """
+        select
+          exists (
+            select 1 from public.messages
+            where conversation_id = %s and direction = 'outbound'
+              and delivery_status = 'pending' and send_started_at is null
+          ),
+          (select min(created_at) from public.messages
+           where conversation_id = %s and direction = 'inbound' and handled_at is null),
+          (select max(created_at) from public.messages
+           where conversation_id = %s and direction = 'inbound' and handled_at is null),
+          now()
+        """,
+        (conversation_id, conversation_id, conversation_id),
+    )
+    row = await cursor.fetchone()
+    if row is None:
+        return None
+    outbox_waiting, first_at, last_at, now = row
+    if outbox_waiting:
+        return 0.0
+    if first_at is None:
+        return None
+    return seconds_until_ready(first_at, last_at, now)
 
 
 async def mark_handled(conn: AsyncConnection, message_ids: Sequence[UUID]) -> None:
@@ -592,15 +642,19 @@ class ApprovedTemplate:
     category: BillingCategory
 
 
-async def approved_template(conn: AsyncConnection, name: str) -> ApprovedTemplate | None:
+async def approved_template(
+    conn: AsyncConnection, name: str, category: BillingCategory
+) -> ApprovedTemplate | None:
+    """The template, only while Meta keeps it approved and in the category Axon sends it as: a
+    utility template Meta moved to marketing must not reach patients who never opted in."""
     cursor = await conn.execute(
         """
         select name, language, category from public.templates
-        where name = %s and status = 'approved'
+        where name = %s and status = 'approved' and category = %s
         order by language = 'es_MX' desc
         limit 1
         """,
-        (name,),
+        (name, category),
     )
     row = await cursor.fetchone()
     return ApprovedTemplate(*row) if row else None

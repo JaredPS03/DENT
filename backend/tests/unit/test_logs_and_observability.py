@@ -191,3 +191,12 @@ def test_sentry_events_lose_bodies_cookies_signatures_and_exception_text() -> No
         assert secret not in scrubbed, secret
     assert SCRUBBED in scrubbed
     assert "UniqueViolation" in scrubbed
+
+
+def test_libraries_that_log_request_bodies_stay_quiet_even_in_debug() -> None:
+    configure_logging("DEBUG")
+    try:
+        for name in ("botocore", "boto3", "s3transfer", "urllib3", "httpx", "httpcore", "psycopg"):
+            assert not logging.getLogger(name).isEnabledFor(logging.INFO), name
+    finally:
+        configure_logging("INFO")

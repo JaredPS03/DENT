@@ -8,12 +8,13 @@ the deadline, Meta gets a 503 and retries later; stored items are deduplicated, 
 duplicates them.
 """
 
+import asyncio
 import hmac
 import json
 import logging
 import re
 from collections import defaultdict
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import PlainTextResponse
@@ -33,6 +34,11 @@ router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 # Meta sends up to 1000 updates per notification and documents payloads of up to 3 MB.
 MAX_BODY_BYTES = 3 * 1024 * 1024
+# Bodies read at once, and how long reading one may take. Unsigned bodies are held in memory until
+# the signature is checked: without these, a few hundred slow 3 MB uploads would exhaust the
+# instance that also serves /api. Meta retries a 503 or a 408 later.
+MAX_CONCURRENT_READS = 16
+READ_DEADLINE_SECONDS = 10.0
 # Routing and storing one webhook never takes longer than this, even if the database hangs.
 STORE_DEADLINE_SECONDS = 8.0
 _CHALLENGE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -82,7 +88,16 @@ def _parse(raw_body: bytes) -> tuple[list[WebhookItem], list[UnroutableChange]]:
 
 @router.post("/whatsapp")
 async def receive(request: Request, settings: SettingsDep, db: DatabaseDep) -> Response:
-    raw_body = await _read_body_capped(request, MAX_BODY_BYTES)
+    reads = cast(asyncio.Semaphore, request.app.state.webhook_reads)
+    if reads.locked():
+        logger.warning("whatsapp_webhook.busy")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+    async with reads:
+        try:
+            raw_body = await within(READ_DEADLINE_SECONDS, _read_body_capped(request, MAX_BODY_BYTES))
+        except TimeoutError:
+            logger.warning("whatsapp_webhook.read_deadline_exceeded")
+            raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT) from None
 
     signature = request.headers.get("x-hub-signature-256")
     if not verify_meta_signature(raw_body, signature, settings.whatsapp_app_secret.get_secret_value()):

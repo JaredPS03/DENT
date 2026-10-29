@@ -15,6 +15,7 @@ from psycopg.types.json import Jsonb
 from app.bot.transcription import FakeTranscription
 from app.core.config import Settings
 from app.db.connection import Database
+from app.db.media_store import check_clinic_path
 from app.db.webhook_events import clinic_for_phone_number
 from app.jobs import queue
 from app.jobs.context import WorkerContext
@@ -82,10 +83,12 @@ class MemoryStore:
     def __init__(self) -> None:
         self.files: dict[str, tuple[bytes, str]] = {}
 
-    async def put(self, path: str, content: bytes, mime_type: str) -> None:
+    async def put(self, clinic_id: UUID, path: str, content: bytes, mime_type: str) -> None:
+        check_clinic_path(clinic_id, path)
         self.files[path] = (content, mime_type)
 
-    async def get(self, path: str) -> bytes:
+    async def get(self, clinic_id: UUID, path: str) -> bytes:
+        check_clinic_path(clinic_id, path)
         return self.files[path][0]
 
 

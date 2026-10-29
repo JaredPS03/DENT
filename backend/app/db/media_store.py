@@ -25,10 +25,17 @@ def media_path(clinic_id: UUID, conversation_id: UUID, message_id: UUID, extensi
     return f"{clinic_id}/{conversation_id}/{message_id}.{extension}"
 
 
-class MediaStore(Protocol):
-    async def put(self, path: str, content: bytes, mime_type: str) -> None: ...
+def check_clinic_path(clinic_id: UUID, path: str) -> None:
+    """The S3 keys see every clinic's files (Storage policies do not apply to them), so every
+    read and write proves, here, that the path belongs to the clinic of the transaction."""
+    if not path.startswith(f"{clinic_id}/") or ".." in path or "//" in path:
+        raise ValueError("the media path does not belong to this clinic")
 
-    async def get(self, path: str) -> bytes: ...
+
+class MediaStore(Protocol):
+    async def put(self, clinic_id: UUID, path: str, content: bytes, mime_type: str) -> None: ...
+
+    async def get(self, clinic_id: UUID, path: str) -> bytes: ...
 
 
 class S3MediaStore:
@@ -52,7 +59,8 @@ class S3MediaStore:
             ),
         )
 
-    async def put(self, path: str, content: bytes, mime_type: str) -> None:
+    async def put(self, clinic_id: UUID, path: str, content: bytes, mime_type: str) -> None:
+        check_clinic_path(clinic_id, path)
         try:
             await asyncio.to_thread(
                 self._client.put_object, Bucket=BUCKET, Key=path, Body=content, ContentType=mime_type
@@ -60,7 +68,8 @@ class S3MediaStore:
         except (BotoCoreError, ClientError) as exc:
             raise MediaStoreError(type(exc).__name__) from None
 
-    async def get(self, path: str) -> bytes:
+    async def get(self, clinic_id: UUID, path: str) -> bytes:
+        check_clinic_path(clinic_id, path)
         try:
             response = await asyncio.to_thread(self._client.get_object, Bucket=BUCKET, Key=path)
             body: bytes = await asyncio.to_thread(response["Body"].read)

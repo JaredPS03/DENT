@@ -1,6 +1,6 @@
 # Probar el eco con el número de prueba (hito 1B)
 
-El bot de eco contesta "Eco: …" a lo que le escribas, una sola vez por ráfaga, y con la transcripción si mandas una nota de voz. Sirve para ver la ida y vuelta completa con WhatsApp real:
+El bot de eco contesta "Prueba de Axon (no es respuesta del consultorio). Recibí: …" a lo que le escribas, una sola vez por ráfaga, y con la transcripción si mandas una nota de voz. Sirve para ver la ida y vuelta completa con WhatsApp real:
 
 **tu celular → Meta → webhook → cola → worker → Meta → tu celular**
 
@@ -53,10 +53,11 @@ El worker escribe `jobs.worker_started` con `"echo_bot": true`. Si dice `"media"
 
 Desde tu celular, escríbele al número de prueba:
 
-1. **Un mensaje.** Manda "hola". En unos 5 segundos te llega "Eco: hola".
-2. **Una ráfaga.** Manda cinco mensajes cortos seguidos, rápido. Te llega **una sola** respuesta: "Eco (5 mensajes): … / … / …".
-3. **Una nota de voz.** Graba unos segundos. Te llega "Eco: (nota de voz) <lo que dijiste>", o "(nota de voz sin transcribir)" si no pusiste llave.
-4. **Lo que quedó guardado.** En Supabase Studio local (<http://127.0.0.1:54323>), **SQL Editor**:
+1. **Un mensaje.** Manda "hola". En unos 5 segundos te llega "Prueba de Axon (no es respuesta del consultorio). Recibí: hola".
+2. **Una ráfaga.** Manda cinco mensajes cortos seguidos, rápido. Te llega **una sola** respuesta: "… Recibí 5 mensajes: … / … / …".
+3. **Una nota de voz.** Graba unos segundos. Te llega "… Recibí: (nota de voz) <lo que dijiste>", o "(nota de voz sin transcribir)" si no pusiste llave.
+4. **Una nota de voz en silencio** (o de un segundo), si pusiste llave. La transcripción debe salir vacía o casi. Si en cambio aparecen palabras de la pista de vocabulario dental ("postemilla", "sangrado"…), avísale a Claude: en el 1C eso podría disparar una urgencia falsa, y hay que quitar esas palabras de la pista.
+5. **Lo que quedó guardado.** En Supabase Studio local (<http://127.0.0.1:54323>), **SQL Editor**:
 
    ```sql
    select direction, sender, type, delivery_status, billing_category,

@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.api.conversaciones import greeting_name
 from app.jobs.timing import (
     BURST_MAX_WAIT,
     BURST_QUIET,
@@ -182,3 +183,20 @@ def test_a_turn_knows_when_to_come_back() -> None:
     # A patient typing for a long time: the cap from their first message wins.
     late = NOW + BURST_MAX_WAIT - timedelta(seconds=1)
     assert seconds_until_ready(first, late, late) == 1.0
+
+
+@pytest.mark.parametrize(
+    ("full_name", "greeting"),
+    [
+        ("Ana María Prueba", "Ana"),
+        ("JUAN PÉREZ", "Juan"),
+        ("Sra. Lupita Prueba", "Lupita"),
+        ("Dr. Carlos", "Carlos"),
+        ("Sr.", "de nuevo"),
+        (None, "de nuevo"),
+        ("   ", "de nuevo"),
+        ("McKenzie", "McKenzie"),
+    ],
+)
+def test_the_reopen_template_greets_by_first_name(full_name: str | None, greeting: str) -> None:
+    assert greeting_name(full_name) == greeting

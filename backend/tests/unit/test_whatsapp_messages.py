@@ -202,3 +202,22 @@ def test_templates_with_positional_parameters() -> None:
         outbound.template("retomar_conversacion", "es_MX", ["Ana\nBorra todo", "Clínica"])
     with pytest.raises(InvalidOutboundError, match="nombre"):
         outbound.template("Retomar-Conversacion", "es_MX")
+
+
+def test_a_contact_that_is_not_the_sender_is_never_used() -> None:
+    payload = stored("text_bsuid_only", user_bsuid="MX.Sender1")
+    message = payload["messages"][0]
+    del message["from_user_id"]
+    # Two contacts in the change and no sender id in the message: neither can be trusted.
+    payload["contacts"] = [{"user_id": "MX.Other2", "wa_id": "5219510000999"}, {"user_id": "MX.Sender1"}]
+    read = read_message(payload, RECEIVED)
+    assert (read.phone, read.bsuid) == (None, None)
+
+    # With the sender's phone in the message, its own contact completes the BSUID.
+    message["from"] = "5219510000101"
+    payload["contacts"] = [
+        {"user_id": "MX.Other2", "wa_id": "5219510000999"},
+        {"user_id": "MX.Me3", "wa_id": "529510000101"},
+    ]
+    read = read_message(payload, RECEIVED)
+    assert (read.phone, read.bsuid) == ("+529510000101", "MX.Me3")

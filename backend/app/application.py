@@ -17,6 +17,7 @@ from app.core.observability import init_sentry
 from app.db.connection import Database, create_pool
 from app.health import router as health_router
 from app.scheduling.axon import AxonAgenda
+from app.webhooks.whatsapp import MAX_CONCURRENT_READS
 from app.webhooks.whatsapp import router as whatsapp_webhook_router
 
 
@@ -53,6 +54,8 @@ def create_app(settings: Settings | None = None, *, jwks: KeySource | None = Non
     app.state.settings = settings
     # Panel sessions are verified with the project's public keys; tests bring their own.
     app.state.jwks = jwks or SupabaseJwks(settings.supabase_url)
+    # Bounds the unsigned webhook bodies held in memory at once (see app.webhooks.whatsapp).
+    app.state.webhook_reads = asyncio.Semaphore(MAX_CONCURRENT_READS)
     app.state.rate_limiters = {
         "user": RateLimiter(USER_REQUESTS_PER_MINUTE),
         "ip": RateLimiter(IP_REQUESTS_PER_MINUTE),

@@ -220,12 +220,21 @@ def test_a_double_tap_sends_once(
     assert meta.texts() == ["Claro que sí"]
 
 
-@pytest.mark.parametrize("text", ["", "a" * 4097, "😀" * 2049])
+@pytest.mark.parametrize(
+    ("text", "detail"),
+    [
+        ("", "Escribe un mensaje antes de enviar."),
+        ("   ", "Escribe un mensaje antes de enviar."),
+        ("a" * 4097, "Tu mensaje es muy largo: máximo 4096 caracteres."),
+        ("😀" * 2049, "Tu mensaje es muy largo: máximo 4096 caracteres."),
+    ],
+)
 def test_a_message_over_whatsapp_limits_is_refused(
-    api: TestClient, keys: TestKeys, database_url: str, phone: str, text: str
+    api: TestClient, keys: TestKeys, database_url: str, phone: str, text: str, detail: str
 ) -> None:
     conversation_id = new_conversation(database_url, phone, window_hours=20)
-    assert say(api, keys, conversation_id, text).status_code == 422
+    response = say(api, keys, conversation_id, text)
+    assert (response.status_code, response.json()["detail"]) == (422, detail)
     assert outbound(database_url, conversation_id) == []
 
 
@@ -238,8 +247,24 @@ def test_without_the_approved_template_a_closed_window_cannot_be_reopened(
     conversation_id = new_conversation(database_url, phone, window_hours=-30)
     response = say(api, keys, conversation_id, "¿Sigues interesado en tu cita?")
     assert response.status_code == 409
-    assert "retomar_conversacion" in response.json()["detail"]
+    assert "Llámale" in response.json()["detail"]
     assert outbound(database_url, conversation_id) == []
+
+
+def test_a_reopen_template_moved_to_marketing_is_never_sent(
+    api: TestClient, keys: TestKeys, database_url: str, phone: str
+) -> None:
+    sql = (
+        "update public.templates set status = %s, category = %s"
+        " where name = 'retomar_conversacion' returning 1"
+    )
+    rows_as_clinic(database_url, CLINIC_A, sql, ("approved", "marketing"))
+    try:
+        conversation_id = new_conversation(database_url, phone, window_hours=-30)
+        assert say(api, keys, conversation_id, "¿Seguimos?").status_code == 409
+        assert outbound(database_url, conversation_id) == []
+    finally:
+        rows_as_clinic(database_url, CLINIC_A, sql, ("pending", "utility"))
 
 
 @pytest.mark.usefixtures("reopen_template")

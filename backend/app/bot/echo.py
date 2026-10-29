@@ -17,10 +17,14 @@ _LABELS = {
 }
 
 
+# Says plainly that it is a test, in case someone sees it on a phone during a demo.
+PREFIX = "Prueba de Axon (no es respuesta del consultorio)."
+
+
 def echo_reply(batch: Sequence[PendingMessage]) -> str:
     parts = [_describe(message) for message in batch]
-    heading = "Eco" if len(parts) == 1 else f"Eco ({len(parts)} mensajes)"
-    reply = f"{heading}: " + " / ".join(parts)
+    heading = f"{PREFIX} Recibí:" if len(parts) == 1 else f"{PREFIX} Recibí {len(parts)} mensajes:"
+    reply = f"{heading} " + " / ".join(parts)
     return reply if len(reply) <= MAX_TEXT // 2 else reply[: MAX_TEXT // 2 - 1] + "…"
 
 

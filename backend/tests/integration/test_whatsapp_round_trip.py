@@ -16,10 +16,12 @@ import pytest
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
+from app.bot.echo import PREFIX as ECHO
 from app.bot.transcription import FakeTranscription, TranscriptionUnavailableError
 from app.core.config import Settings
+from app.db import conversations
 from app.db.connection import Database
-from app.jobs import queue, worker
+from app.jobs import queue, turns, worker
 from app.jobs.context import WorkerContext
 from app.jobs.queue import ConversationJob, QueuedJob
 from app.jobs.timing import MAX_ATTEMPTS
@@ -186,12 +188,17 @@ async def test_a_text_message_goes_round_trip(
 
     await take_turns(ctx, conversation_id)
 
-    assert meta.texts() == ["Eco: Does it come in another color?"]
+    assert meta.texts() == [f"{ECHO} Recibí: Does it come in another color?"]
     sent = meta.sent[0]
     assert sent["to"] == phone.removeprefix("+")
     assert sent["text"]["preview_url"] is False
     [reply] = await outbound_of(db, conversation_id)
-    assert reply[:4] == ("bot", "text", "Eco: Does it come in another color?", "sent")
+    assert reply[:4] == (
+        "bot",
+        "text",
+        f"{ECHO} Recibí: Does it come in another color?",
+        "sent",
+    )
     assert reply[4].startswith("wamid.OUT.")
     assert reply[5] == "service"
     # The callback data is the reply's own row, so statuses find it even without Meta's id.
@@ -270,7 +277,7 @@ async def test_messages_arriving_out_of_order_are_answered_in_the_order_they_wer
 
     await take_turns(ctx, await conversation_of(db, phone))
 
-    assert meta.texts() == ["Eco (2 mensajes): primero / segundo"]
+    assert meta.texts() == [f"{ECHO} Recibí 2 mensajes: primero / segundo"]
 
 
 async def test_delivery_statuses_never_go_back(
@@ -367,7 +374,9 @@ async def test_a_burst_of_five_messages_gets_one_answer(
     assert await queued_count(db, match) >= 1
 
     await take_turns(ctx, conversation_id)
-    assert meta.texts() == ["Eco (5 mensajes): mensaje 1 / mensaje 2 / mensaje 3 / mensaje 4 / mensaje 5"]
+    assert meta.texts() == [
+        f"{ECHO} Recibí 5 mensajes: mensaje 1 / mensaje 2 / mensaje 3 / mensaje 4 / mensaje 5"
+    ]
 
 
 async def test_two_workers_on_one_conversation_answer_once(
@@ -404,12 +413,41 @@ async def test_meta_down_retries_and_sends_once(
 ) -> None:
     await run_events(ctx, await deliver(db, text_from(phone)))
     conversation_id = await conversation_of(db, phone)
-    meta.script.extend([httpx.Response(503), httpx.ConnectError("refused")])
+    meta.script.extend(
+        [
+            httpx.Response(
+                503, json={"error": {"code": 133004, "message": "Server temporarily unavailable"}}
+            ),
+            httpx.Response(429, json={"error": {"code": 130429, "message": "Rate limit hit"}}),
+            httpx.ConnectError("refused"),
+        ]
+    )
 
     await take_turns(ctx, conversation_id)
 
     assert len(meta.sent) == 1
     assert (await outbound_of(db, conversation_id))[0][3] == "sent"
+
+
+async def test_a_gateway_error_is_never_resent(
+    ctx: WorkerContext, db: Database, meta: FakeMeta, phone: str
+) -> None:
+    await run_events(ctx, await deliver(db, text_from(phone)))
+    conversation_id = await conversation_of(db, phone)
+    meta.script.append(httpx.Response(504, text="Gateway Timeout"))
+
+    await take_turns(ctx, conversation_id)
+    await take_turns(ctx, conversation_id)
+
+    # It may have reached the patient: it stays claimed, alerted, and its status will tell.
+    assert meta.sent == []
+    status, started = await one(
+        db,
+        "select delivery_status, send_started_at is not null from public.messages"
+        " where conversation_id = %s and direction = 'outbound'",
+        (conversation_id,),
+    )
+    assert (status, started) == ("pending", True)
 
 
 async def test_a_data_error_is_not_retried(
@@ -505,7 +543,7 @@ async def test_a_voice_note_is_stored_privately_transcribed_and_answered(
     assert meta_media_id is None
     assert transcription == "Hola, quiero una cita para limpieza"
     assert transcriber.calls == [(len(VOICE_NOTE), "audio/ogg")]
-    assert meta.texts() == ["Eco: (nota de voz) Hola, quiero una cita para limpieza"]
+    assert meta.texts() == [f"{ECHO} Recibí: (nota de voz) Hola, quiero una cita para limpieza"]
 
 
 async def test_a_transcription_outage_retries_and_the_last_attempt_still_answers(
@@ -533,7 +571,7 @@ async def test_a_transcription_outage_retries_and_the_last_attempt_still_answers
         )
     await run_matching(ctx, job_match)
 
-    assert meta.texts() == ["Eco: (nota de voz sin transcribir)"]
+    assert meta.texts() == [f"{ECHO} Recibí: (nota de voz sin transcribir)"]
 
 
 async def test_media_from_a_host_that_is_not_meta_is_never_fetched(
@@ -558,7 +596,7 @@ async def test_media_from_a_host_that_is_not_meta_is_never_fetched(
         (conversation_id,),
     )
     assert (media_path, meta_media_id) == (None, None)  # given up, never retried
-    assert meta.texts() == ["Eco: (nota de voz sin transcribir)"]
+    assert meta.texts() == [f"{ECHO} Recibí: (nota de voz sin transcribir)"]
 
 
 # Coexistence and the window ---------------------------------------------------------------------------
@@ -642,3 +680,79 @@ async def test_dead_letters_can_be_replayed_once_the_cause_is_fixed(db: Database
     # Back in the queue as a new job, without the failure note.
     assert await queued_count(db, {"marker": marker}) == 1
     assert await queued_count(db, {"marker": marker, "failure": {}}) == 0
+
+
+async def test_a_recycled_number_never_lands_in_the_previous_owner_chat(
+    ctx: WorkerContext, db: Database, phone: str
+) -> None:
+    previous, newcomer = f"MX.{uuid4().hex[:20]}", f"MX.{uuid4().hex[:20]}"
+    for bsuid in (previous, newcomer):
+        payload = meta_now(
+            "text",
+            phone_number_id=PHONE_NUMBER_ID_A,
+            user_phone=wa_id(phone),
+            message_id=wamid(),
+            extra={"from_user_id": bsuid},
+        )
+        await run_events(ctx, await deliver(db, payload))
+
+    patients = await rows(
+        db,
+        "select bsuid, phone, (select count(*) from public.conversations c where c.patient_id = p.id)"
+        " from public.patients p where bsuid = any(%s) order by bsuid = %s",
+        ([previous, newcomer], newcomer),
+    )
+    # The previous owner keeps their record without the number; the newcomer gets their own chat.
+    assert patients == [(previous, None, 1), (newcomer, phone, 1)]
+
+
+async def test_what_the_clinic_sends_to_someone_who_is_not_a_patient_is_not_kept(
+    ctx: WorkerContext, db: Database
+) -> None:
+    lab = random_phone()  # the lab, a supplier, family: never wrote to the clinic as a patient
+    echo = meta_now("echo_text", phone_number_id=PHONE_NUMBER_ID_A, user_phone=wa_id(lab), message_id=wamid())
+    events = await deliver(db, echo)
+    await run_events(ctx, events)
+
+    assert await rows(db, "select id from public.patients where phone = %s", (lab,)) == []
+    processed = await rows(
+        db, "select processed_at is not null from public.webhook_events where id = any(%s)", (events,)
+    )
+    assert processed == [(True,)]
+
+
+async def test_a_message_that_arrives_mid_turn_is_answered_after_it(
+    ctx: WorkerContext, db: Database, meta: FakeMeta, phone: str
+) -> None:
+    await run_events(ctx, await deliver(db, text_from(phone)))
+    conversation_id = await conversation_of(db, phone)
+    await patient_pauses(db, conversation_id)
+    # Another worker is in the middle of this conversation's turn.
+    holder = turns._Lease(CLINIC_A, conversation_id, uuid4())
+    async with db.clinic_transaction(CLINIC_A) as conn:
+        assert await conversations.acquire_lease(conn, conversation_id, holder.token, 60) == "acquired"
+
+    match = {"kind": "conversation", "conversation_id": str(conversation_id)}
+    await run_matching(ctx, match)  # finds the lease busy and steps aside, without piling up jobs
+    assert meta.sent == []
+    assert await queued_count(db, match) == 0
+
+    await turns._release(ctx, holder)  # the holder lets go and sees the message waiting
+    await run_matching(ctx, match)
+    assert meta.texts() == [f"{ECHO} Recibí: Does it come in another color?"]
+
+
+async def test_a_flood_of_voice_notes_only_transcribes_the_first_ones(
+    settings: Settings, db: Database, meta: FakeMeta, phone: str
+) -> None:
+    transcriber = FakeTranscription("hola")
+    ctx = make_context(settings, db, meta, transcriber=transcriber)
+    for _ in range(turns.MAX_TRANSCRIPTIONS_PER_TURN + 2):
+        media_id = str(uuid4().int)[:16]
+        meta.media[media_id] = (VOICE_NOTE, "audio/ogg; codecs=opus")
+        await run_events(ctx, await deliver(db, audio_from(phone, media_id)))
+
+    await take_turns(ctx, await conversation_of(db, phone))
+
+    assert len(transcriber.calls) == turns.MAX_TRANSCRIPTIONS_PER_TURN
+    assert len(meta.sent) == 1  # still one answer for the whole burst

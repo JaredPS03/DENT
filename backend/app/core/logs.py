@@ -69,6 +69,7 @@ def log_asyncio_exception(loop: asyncio.AbstractEventLoop, context: dict[str, An
 # "uvicorn.error" logs unhandled exceptions with their full message ("Exception in ASGI
 # application"), which can quote patient data, so they must go through JsonFormatter too.
 _SERVER_LOGGERS = ("uvicorn", "uvicorn.error", "fastapi")
+_CHATTY_LIBRARIES = ("botocore", "boto3", "s3transfer", "urllib3", "httpx", "httpcore", "psycopg")
 
 
 def configure_logging(level: str = "INFO") -> None:
@@ -83,3 +84,7 @@ def configure_logging(level: str = "INFO") -> None:
         server_logger.propagate = True
     # Access logs would print full URLs and client addresses; requests are logged by the app instead.
     logging.getLogger("uvicorn.access").disabled = True
+    # In DEBUG these libraries log request bodies and headers: voice notes, photos, message texts
+    # and tokens. They never go below WARNING, whatever LOG_LEVEL says.
+    for name in _CHATTY_LIBRARIES:
+        logging.getLogger(name).setLevel(logging.WARNING)

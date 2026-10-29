@@ -1,8 +1,10 @@
+import asyncio
 import time
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from typing import Any
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -157,6 +159,51 @@ def test_body_of_exactly_three_megabytes_is_read(client: TestClient) -> None:
         client.post(URL, content=body, headers={"x-hub-signature-256": "sha256=" + "0" * 64}).status_code
         == 401
     )
+
+
+def test_while_too_many_bodies_are_being_read_meta_is_asked_to_retry(client: TestClient) -> None:
+    client.app.state.webhook_reads = asyncio.Semaphore(0)  # type: ignore[attr-defined]
+    body = b"{}"
+    assert client.post(URL, content=body, headers={"x-hub-signature-256": sign(body)}).status_code == 503
+
+
+@pytest.mark.anyio
+async def test_a_body_that_arrives_too_slowly_is_cut_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(whatsapp_webhook, "READ_DEADLINE_SECONDS", 0.2)
+    app = create_app(make_settings())
+    app.state.db = None  # the body never gets far enough to need it
+
+    async def trickle() -> AsyncIterator[bytes]:
+        yield b"{"
+        await asyncio.sleep(2)
+        yield b"}"
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as http:
+        response = await http.post(
+            URL, content=trickle(), headers={"x-hub-signature-256": "sha256=" + "0" * 64}
+        )
+    assert response.status_code == 408
+
+
+def test_a_thousand_updates_in_one_notification_are_stored_and_queued(
+    client: TestClient, database_url: str
+) -> None:
+    tag = uuid4().hex
+    changes = [message_change(PHONE_NUMBER_ID_A, f"wamid.MANY.{tag}.{index}") for index in range(1000)]
+    started = time.perf_counter()
+    assert _post(client, webhook_payload(*changes)) == 200
+    assert time.perf_counter() - started < 3
+    queued = rows_as_clinic(
+        database_url,
+        CLINIC_A,
+        """
+        select count(*) from public.webhook_events e
+        join pgmq.q_whatsapp_inbound q on q.message @> jsonb_build_object('event_id', e.id::text)
+        where e.meta_id like %s
+        """,
+        (f"wamid.MANY.{tag}.%",),
+    )
+    assert queued == [(1000,)]
 
 
 # Routing and deduplication -----------------------------------------------------------------------

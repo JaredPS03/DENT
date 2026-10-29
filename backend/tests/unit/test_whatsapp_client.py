@@ -160,9 +160,10 @@ async def test_the_allowlist_compares_normalized_numbers() -> None:
 @pytest.mark.parametrize(
     ("http_status", "code", "retryable", "retry_after"),
     [
-        (500, None, True, None),
         (503, 131016, True, None),
+        (503, 133004, True, None),
         (429, 130429, True, None),
+        (429, None, True, None),
         (400, 131056, True, 6.0),
         (400, 131047, False, None),  # window closed: a template is needed, not a retry
         (400, 131030, False, None),
@@ -206,6 +207,24 @@ async def test_an_accepted_but_unreadable_answer_counts_as_unknown() -> None:
         return httpx.Response(200, text="ok")
 
     client, http = _client(httpx.MockTransport(handler))
+    async with http:
+        with pytest.raises(OutcomeUnknownError):
+            await client.send_text("123456789012345", ALLOWED_TEST_NUMBER, "hola")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "answer",
+    [
+        httpx.Response(502, text="Bad Gateway"),
+        httpx.Response(504),
+        httpx.Response(500, json={"error": {"code": 1, "message": "An unknown error occurred"}}),
+        httpx.Response(500, json={"error": {"code": 131000, "message": "Something went wrong"}}),
+        httpx.Response(400, json={"error": {"code": 131000}}),
+    ],
+)
+async def test_a_server_error_without_a_not_now_code_may_have_gone_out(answer: httpx.Response) -> None:
+    client, http = _client(httpx.MockTransport(lambda request: answer))
     async with http:
         with pytest.raises(OutcomeUnknownError):
             await client.send_text("123456789012345", ALLOWED_TEST_NUMBER, "hola")

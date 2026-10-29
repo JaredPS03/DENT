@@ -15,8 +15,11 @@ OPENAI_TRANSCRIPTIONS_URL = "https://api.openai.com/v1/audio/transcriptions"
 TIMEOUT_SECONDS = 30.0
 # Vocabulary that helps with Mexican dental speech. No patient data.
 DENTAL_PROMPT = (
-    "Nota de voz de un paciente a un consultorio dental en México: citas, limpieza, resina, "
-    "endodoncia, extracción, brackets, muela, encía, dolor."
+    "Nota de voz de un paciente a un consultorio dental en México. Puede hablar de su cita o de su "
+    "boca: limpieza, caries, muela picada, muela del juicio, resina, calza, extracción, endodoncia, "
+    "tratamiento de conducto, nervio, corona, funda, puente, placa, implante, ortodoncia, brackets, "
+    "frenos, retenedor, guarda, blanqueamiento, carillas, encía, sarro, sensibilidad, dolor, "
+    "hinchazón, postemilla, flemón, sangrado, diente roto, valoración, presupuesto, anticipo."
 )
 MAX_TRANSCRIPTION_CHARS = 4000
 

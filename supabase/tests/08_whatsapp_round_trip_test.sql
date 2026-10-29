@@ -3,7 +3,7 @@
 begin;
 \ir 00_helpers.psql
 
-select plan(19);
+select plan(20);
 
 create function pg_temp.as_backend(p_sql text, p_clinic uuid default null) returns text language sql as $$
   select (pg_temp.run_as('axon_app', p_sql, coalesce(p_clinic, pg_temp.clinic_a()))).state
@@ -86,6 +86,10 @@ select is(pg_temp.as_backend(format(
 select is(pg_temp.as_backend(format(
   'update public.clinics set human_reply_pause_minutes = 1 where id = %L', pg_temp.clinic_a()
 )), '23514', 'la pausa del bot no baja de 5 minutos');
+
+select is(pg_temp.as_backend(format(
+  'update public.clinics set human_reply_pause_minutes = 1441 where id = %L', pg_temp.clinic_a()
+)), '23514', 'la pausa del bot no pasa de un día');
 
 -- Dead-letter queue --------------------------------------------------------------------
 

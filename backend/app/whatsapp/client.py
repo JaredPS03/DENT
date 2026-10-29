@@ -23,11 +23,12 @@ SEND_TIMEOUT_SECONDS = 10.0
 # What Axon writes in biz_opaque_callback_data (the id of its message row) fits easily.
 MAX_CALLBACK_DATA = 512
 
-# Meta errors worth retrying later: overload, rate limits and maintenance. Any other error is about
-# the message itself and would fail again (Meta's error codes reference).
-_RETRYABLE_CODES: frozenset[int] = frozenset(
-    {1, 2, 4, 80007, 130429, 131000, 131016, 131056, 131057, 133004, 134101}
-)
+# Meta errors that say the message was turned away for now: overload, rate limits, maintenance,
+# a template still syncing. Retrying them never duplicates it. Any other error is about the
+# message itself and would fail again (Meta's error codes reference).
+_RETRYABLE_CODES: frozenset[int] = frozenset({2, 4, 80007, 130429, 131016, 131056, 131057, 133004, 134101})
+# "Unknown error" and "possible server error": Meta may have sent it anyway.
+_UNKNOWN_OUTCOME_CODES: frozenset[int] = frozenset({1, 131000})
 # Pair rate limit: one message every 6 seconds to the same user.
 PAIR_RATE_LIMIT_CODE = 131056
 PAIR_RATE_LIMIT_SECONDS = 6.0
@@ -50,11 +51,7 @@ class WhatsAppApiError(Exception):
 
     @property
     def retryable(self) -> bool:
-        return (
-            self.http_status >= 500
-            or self.http_status == 429
-            or (self.meta_code is not None and self.meta_code in _RETRYABLE_CODES)
-        )
+        return self.http_status == 429 or (self.meta_code is not None and self.meta_code in _RETRYABLE_CODES)
 
     @property
     def retry_after(self) -> float | None:
@@ -144,7 +141,14 @@ class WhatsAppClient:
         except httpx.TransportError as exc:
             raise OutcomeUnknownError(type(exc).__name__) from None
         if response.status_code >= 400:
-            raise WhatsAppApiError(response.status_code, _meta_code(response))
+            code = _meta_code(response)
+            if code in _UNKNOWN_OUTCOME_CODES or (
+                response.status_code >= 500 and code not in _RETRYABLE_CODES
+            ):
+                # A server error without one of Meta's "not now" codes may still have gone out
+                # (a gateway timing out after Meta took it): never sent twice.
+                raise OutcomeUnknownError(f"http {response.status_code}, code {code}")
+            raise WhatsAppApiError(response.status_code, code)
         try:
             return SentMessage(meta_message_id=str(response.json()["messages"][0]["id"]))
         except (ValueError, KeyError, IndexError, TypeError):

@@ -78,8 +78,8 @@ class Settings(BaseSettings):
     # the one `pnpm db:start` prints (http://127.0.0.1:54321).
     supabase_url: str = Field(min_length=1)
 
-    # Temporary echo bot of milestone 1B: answers "Eco: …" to test the round trip with Meta's test
-    # number. Never in production.
+    # Temporary echo bot of milestone 1B: answers "Prueba de Axon… Recibí: …" to test the round trip
+    # with Meta's test number. Never in production.
     echo_bot_enabled: bool = False
 
     # Voice notes to text (OpenAI gpt-transcribe, which does not train on the audio nor keep it;

@@ -123,11 +123,17 @@ async def _delivery_status(conn: AsyncConnection, update: StatusUpdate) -> None:
 
 async def _echo(conn: AsyncConnection, clinic_id: UUID, echo: EchoMessage) -> None:
     """The clinic wrote from its WhatsApp Business app: the message is the team's, and the bot
-    stays quiet in that chat for the clinic's configured time. It does not open the window."""
+    stays quiet in that chat for the clinic's configured time. It does not open the window.
+
+    Only chats with known patients: the same number also writes to the lab, suppliers or family,
+    who never accepted the privacy notice. Those messages stay a trace in webhook_events."""
     if echo.phone is None:
         logger.error("whatsapp.echo_without_recipient", extra={"meta_id": mask_message_id(echo.meta_id)})
         return
-    patient_id = await db.find_or_create_patient(conn, clinic_id, echo.phone, None)
+    patient_id = await db.find_patient(conn, echo.phone)
+    if patient_id is None:
+        logger.info("whatsapp.echo_to_unknown_contact", extra={"meta_id": mask_message_id(echo.meta_id)})
+        return
     conversation = await db.open_conversation(conn, clinic_id, patient_id)
     if echo.action == "message" and await db.insert_echo(conn, clinic_id, conversation.id, echo) is None:
         return  # a message Axon itself sent, or a repeated echo
