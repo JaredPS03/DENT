@@ -40,3 +40,4 @@ Qué se gana, qué se pierde y qué hay que vigilar.
 | [003](003-revision-de-cierre.md) | Revisión de cierre de la Fase 0: seed atómico, `DATABASE_URL` con libpq, logs de asyncio, copias de `.env`, permisos y la puerta con el número de Axon | aceptada |
 | [004](004-alta-de-consultorios-en-fase-1.md) | Alta de consultorios desde un archivo, como hito de la Fase 1 | aceptada |
 | [005](005-sesiones-del-panel-y-agenda.md) | Sesiones del panel (JWKS, membresía, límite) y reglas de la agenda (15 min, 1 h de anticipación) | aceptada |
+| [006](006-whatsapp-de-ida-y-vuelta.md) | WhatsApp de ida y vuelta: cola y worker, lock por conversación, envíos como máximo una vez, audios con S3 y gpt-transcribe, coexistencia (2 h) y texto retenido con la ventana cerrada | aceptada |

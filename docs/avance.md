@@ -4,11 +4,12 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
 
 ## Estado actual
 
-- **Fase y hito:** Fase 1 · hito 1A cerrado (agenda y disponibilidad). La Fase 0 corre en paralelo, como dice la especificación: su código está terminado y falta su puerta con el número propio de Axon.
+- **Fase y hito:** Fase 1 · hito 1B cerrado (WhatsApp de ida y vuelta, todavía sin IA). La Fase 0 corre en paralelo: su código está terminado y falta su puerta con el número propio de Axon.
 - **Siguiente paso:**
-  - Claude empieza el 1B (WhatsApp de ida y vuelta) con el prompt de `prompts/fases.md`: primero el plan, para que Jared lo apruebe.
+  - Jared prueba el eco con el número de prueba siguiendo `docs/probar-eco.md`.
+  - Claude empieza el 1C (el bot con IA) con el prompt de `prompts/fases.md`: primero el plan.
   - Jared pasa la puerta de la Fase 0 con `docs/puerta-fase-0.md`.
-- **Bloqueos:** ninguno para el 1A. Del lado de Meta, la puerta necesita el número propio de Axon dado de alta en la API; solo Jared puede tramitarlo.
+- **Bloqueos:** ninguno en el código. Para usar audios reales hace falta firmar el DPA de OpenAI y mencionar la transcripción en el aviso de privacidad (decisión 006).
 
 ## Plantilla de cada entrada
 
@@ -21,6 +22,58 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
 ```
 
 ## Entradas
+
+### 2026-10-29 · Hito 1B · WhatsApp de ida y vuelta
+
+- **Qué quedó:**
+  - **Webhook → cola → worker.**
+    - Cada aviso se guarda y su id se encola en la misma transacción. El tope sube a 3 MB, el máximo de Meta.
+    - El worker (`uv run python -m app.jobs.worker`) reintenta con espera exponencial y manda a la cola de fallidos tras 8 intentos. `app.cli replay-dead-letters` los devuelve.
+  - **Pacientes y conversaciones.** El paciente se da de alta con su primer mensaje, por teléfono o por BSUID. Los números de México quedan como +52 y 10 dígitos. Cada mensaje del paciente abre o renueva la ventana de 24 h, y un chat cerrado se reabre.
+  - **Turnos.** Un worker a la vez por conversación, con un lock en Postgres que vence solo, sin transacciones abiertas mientras se espera a Meta. Una ráfaga se contesta una vez: a los 4 s de silencio, o a los 15 s si el paciente no para.
+  - **Envíos.**
+    - Salen como máximo una vez, con su categoría de cobro, y respetan la ventana y la lista de números de prueba.
+    - `biz_opaque_callback_data` concilia los estados aunque se pierda la respuesta de Meta.
+    - Los estados nunca retroceden, y el precio que reporta Meta queda guardado.
+  - **Audios.** Se descargan solo de hosts de Meta y con verificación de hash, y se guardan en el bucket privado por S3. La transcripción va detrás de `TranscriptionService`, con OpenAI `gpt-transcribe` y una versión falsa.
+  - **Coexistencia.** Lo que el consultorio manda desde su app queda como mensaje humano y el bot calla 2 horas en ese chat.
+  - **`/api/conversaciones/{id}/tomar`, `/soltar` y `/mensajes`.**
+    - Todo pasa por `audit_log`.
+    - Un doble toque envía una vez.
+    - Con la ventana cerrada sale `retomar_conversacion` una sola vez y el texto espera a que el paciente conteste; si no contesta en 24 h, queda como no enviado.
+  - **Bot de eco temporal** (`ECHO_BOT_ENABLED`, prohibido en producción). Guía para probarlo: `docs/probar-eco.md`.
+- **Evidencia:**
+  - `uv run pytest`: **338 passed**, 153 más que en el 1A. Incluyen las pruebas con los ejemplos oficiales de Meta (`backend/tests/fixtures/meta`):
+    - un mensaje entregado dos veces se guarda y se contesta una;
+    - mensajes en desorden se contestan en el orden en que se mandaron;
+    - estados en desorden no retroceden;
+    - una ráfaga de 5 mensajes recibe una respuesta;
+    - nota de voz guardada, transcrita y contestada;
+    - estado `failed` con el código 131049;
+    - eco de coexistencia que pausa el bot y no abre la ventana;
+    - ventana vencida (131047);
+    - paciente solo con BSUID;
+    - mensaje de grupo ignorado;
+    - cinco workers sobre la misma conversación contestan una vez;
+    - Meta caído se reintenta y envía una vez; un error de datos no se reintenta;
+    - descarga a un host que no es de Meta, rechazada sin mandar el token;
+    - cola de fallidos y su reenvío;
+    - la API completa con el worker enviando;
+    - el bucket real por S3 rechaza tipos no permitidos y llaves falsas.
+  - ruff, formato y mypy limpios. `pnpm db:test`: **336 pruebas pgTAP, PASS**, 20 nuevas. `pip-audit` y `pnpm audit --prod`: sin vulnerabilidades. gitleaks: sin secretos. `pnpm panel:check`: limpio.
+  - Base local arrancada desde cero con Storage, como hará CI: las 8 migraciones aplican y el bucket queda privado.
+  - **Revisores:** pendiente; se completa abajo.
+- **Decisiones:** [006 · WhatsApp de ida y vuelta](decisiones/006-whatsapp-de-ida-y-vuelta.md). Especificación al día: tres funciones `security definer` y el BSUID. Regla de seguridad: tope de 3 MB en el webhook.
+- **Dependencia nueva, aprobada por Jared:** `boto3`.
+- **Pendiente:**
+  - **Jared, antes de audios reales:** firmar el DPA de OpenAI y pedir cero retención; mencionar en el aviso de privacidad que la transcripción se procesa fuera de México, y que lo valide un abogado; probar que OpenAI acepta las notas OGG/Opus.
+  - **1C:** el bot con IA reemplaza el eco. Pasa aquí, desde el 1A, el tope de largo para el motivo de cancelación cuando lo mande el bot.
+  - **1D:**
+    - el medidor de topes con lo que Meta cobra;
+    - los avisos de sistema (número que cambia de teléfono y regenera su BSUID);
+    - limpieza de audios y avisos vencidos;
+    - alerta de mensajes sin respuesta en 5 min y de la cola de fallidos.
+  - **1E:** `GET /api/medios/{id}` con URLs firmadas, la bandeja con Realtime y las pantallas de tomar, soltar y escribir.
 
 ### 2026-10-25 · Hito 1A · Agenda y disponibilidad
 

@@ -162,6 +162,8 @@ async def _ask_patient_to_come_back(
         return False
     patient_name, clinic_name = await db.patient_and_clinic_names(conn, conversation_id)
     first_name = patient_name.split()[0] if patient_name and patient_name.strip() else UNKNOWN_NAME_GREETING
+    # Meta rejects template parameters with line breaks, tabs or runs of spaces.
+    clinic_name = " ".join(clinic_name.split())
     await db.insert_outbound(
         conn,
         clinic_id=session.clinic_id,

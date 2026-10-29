@@ -40,7 +40,7 @@ uv run pytest                # unitarias + integración contra la base local
 uv run fastapi dev app/main.py
 ```
 
-En otra terminal, para el panel: `pnpm --filter panel dev` (http://localhost:3000).
+En otra terminal, el worker: `uv run python -m app.jobs.worker` (en `backend/`). Para el panel: `pnpm --filter panel dev` (http://localhost:3000).
 
 ## Comandos
 
@@ -52,6 +52,9 @@ En otra terminal, para el panel: `pnpm --filter panel dev` (http://localhost:300
 | Pruebas del backend | `backend/` | `uv run pytest` |
 | Lint, formato y tipos del backend | `backend/` | `uv run ruff check . && uv run ruff format --check . && uv run mypy app tests` |
 | Backend en desarrollo | `backend/` | `uv run fastapi dev app/main.py` |
+| Worker (cola, turnos y envíos) | `backend/` | `uv run python -m app.jobs.worker` |
+| Probar el eco con el número de prueba | `backend/` | guía en `docs/probar-eco.md` |
+| Devolver a la cola los trabajos fallidos | `backend/` | `uv run python -m app.cli replay-dead-letters` |
 | Mensaje de prueba de WhatsApp (puerta de la Fase 0: `docs/puerta-fase-0.md`) | `backend/` | `uv run python -m app.cli send-test-message --to +52...` |
 | Buscar secretos en el historial | raíz | `docker run --rm -v "${PWD}:/repo" zricethezav/gitleaks:v8.30.1 git /repo --redact` |
 | Panel: lint, tipos y build | raíz | `pnpm panel:check` |
