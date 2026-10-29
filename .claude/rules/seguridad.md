@@ -19,7 +19,7 @@ Axon guarda datos de salud de pacientes. Un error aquí cuesta la confianza de l
 
 ## Webhooks y archivos
 
-- Lee el cuerpo crudo, valida la firma y solo después parsea con modelos Pydantic estrictos. Rechaza cuerpos de más de 1 MB.
+- Lee el cuerpo crudo, valida la firma y solo después parsea con modelos Pydantic estrictos. Rechaza cuerpos de más de 3 MB en el webhook de WhatsApp (el máximo que documenta Meta; decisión 006) y de más de 16 KB en `/api`.
 - Responde rápido y procesa en la cola.
 - Descarga medios de Meta solo desde la URL que devuelve la Graph API para ese media id, por https y de dominios de Meta; con límite de tamaño y una lista blanca de tipos (audio, imagen y PDF).
 - Audios y fotos se ven con URLs firmadas de vida corta que entrega `GET /api/medios/{id}`; cada entrega queda en `audit_log`.

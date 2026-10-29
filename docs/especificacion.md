@@ -234,10 +234,10 @@ Toda tabla lleva `clinic_id` y una regla de seguridad por fila: un consultorio n
 | `services` | Catálogo | nombre, duración en minutos, precio de referencia, requiere anticipo, monto del anticipo | 1 |
 | `schedules` | Horario semanal | día, hora de inicio y fin, descansos, margen entre citas | 1 |
 | `schedule_exceptions` | Vacaciones y bloqueos | fecha y hora de inicio y fin, motivo | 1 |
-| `patients` | Pacientes | nombre, teléfono, última visita, permiso de marketing, origen (bot, importado, Dentalink), id externo | 1 |
+| `patients` | Pacientes | nombre, teléfono o id de usuario de WhatsApp (BSUID, para quien oculta su número con un nombre de usuario), última visita, permiso de marketing, origen (bot, importado, Dentalink), id externo | 1 |
 | `consents` | Prueba del consentimiento | paciente, versión del aviso, fecha y hora, mensaje en que aceptó | 1 |
 | `appointments` | Citas | paciente, servicio, `provider_id`, inicio y fin, estado (pendiente, confirmada, asistió, faltó, cancelada), creada por (bot, humano), id externo si viene de Google o Dentalink; restricción de exclusión contra traslapes por `provider_id` | 1 |
-| `conversations` | Un chat por paciente | estado (bot, humano, cerrada), última actividad, ventana de 24 h abierta hasta | 1 |
+| `conversations` | Un chat por paciente | estado (bot, humano, cerrada), última actividad, ventana de 24 h abierta hasta, bot en pausa hasta (cuando el consultorio contesta desde su app) | 1 |
 | `messages` | Cada mensaje | dirección, tipo (texto, audio, imagen, botón), contenido, transcripción, id de Meta, categoría cobrable | 1 |
 | `escalations` | Pases a humano | motivo, prioridad (urgente, normal), resumen, quién lo atendió | 1 |
 | `events` | Hechos para el tablero | tipo (agendada fuera de horario, confirmada, reagendada, reactivada…), cita, fecha, valor en pesos cuando el paciente asiste | 1 |
@@ -523,7 +523,7 @@ Estas decisiones completan la especificación para construirla con Claude Code; 
 - **Modelo y datos:** el bot usa `claude-haiku-5-5` con herramientas en modo estricto (`strict: true`). En la API de Claude, el contenido de las conversaciones no se conserva por defecto y no se usa para entrenar sin permiso expreso; Fable 5.1 y Mythos 5.1 exigen 30 días de retención, así que no se usan con datos de pacientes. Nunca se ponen datos de pacientes dentro de los esquemas de las herramientas ([retención de datos](https://platform.claude.com/docs/en/manage-claude/api-and-data-retention), [herramientas estrictas](https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use)).
 - **Tope de mensajes:** al llegar al tope nunca se deja de contestar a un paciente ni de mandar recordatorios; el excedente se cobra. Lo que se detiene son las campañas de marketing.
 - **Mensajes del dentista desde su app:** con coexistencia, si el consultorio contesta desde el teléfono, el bot se pausa en esa conversación por un tiempo configurable.
-- **Lecturas sin consultorio fijado:** solo dos funciones `security definer` que devuelven ids: `private.clinic_for_phone_number`, para enrutar el webhook, y `private.active_clinic_ids`, para las tareas programadas. Todo lo demás se lee con el consultorio fijado.
+- **Lecturas sin consultorio fijado:** solo tres funciones `security definer` que devuelven ids: `private.clinic_for_phone_number`, para enrutar el webhook; `private.active_clinic_ids`, para las tareas programadas, y `private.clinic_memberships`, para la sesión del panel (consultorio y rol; decisión 005). Todo lo demás se lee con el consultorio fijado.
 - **Avisos crudos de Meta:** se guardan en `webhook_events` para poder reprocesarlos; la cola solo lleva ids, nunca el contenido de los mensajes.
 - **Urgencia con texto fijo:** si la IA escala con prioridad urgente, el código manda el mismo mensaje fijo de urgencia que el filtro, revisado por el dentista.
 - **Horarios validados en código:** la IA ofrece horarios por el id que devolvió `buscar_disponibilidad`, y el código rechaza cualquier id que no haya salido de ahí en esa conversación.

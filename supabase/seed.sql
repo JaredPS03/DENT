@@ -199,6 +199,9 @@ insert into public.messages (
    'outbound', 'system', 'template', 'Recordatorio de cita', null,
    'wamid.SEED.B.0003', 'utility', 'delivered', null, now() - interval '10 days');
 
+-- The seeded chats already happened: no turn of the worker answers them again.
+update public.messages set handled_at = occurred_at where direction = 'inbound';
+
 insert into public.consents (id, clinic_id, patient_id, notice_version, accepted_at, message_id) values
   ('a9000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'a6000000-0000-4000-8000-000000000001',
    '2026-10', now() - interval '2 hours 3 minutes', 'a8000000-0000-4000-8000-000000000003'),
