@@ -35,8 +35,8 @@ jobs:
       - name: Instalar la CLI de Supabase (fijada en package.json)
         run: pnpm install --frozen-lockfile
 
-      - name: Levantar la base local
-        run: pnpm supabase db start
+      - name: Levantar la base local y Storage (sin los servicios que las pruebas no usan)
+        run: pnpm supabase start -x studio,imgproxy,mailpit,edge-runtime,logflare,vector,supavisor,postgres-meta,realtime,postgrest
       - name: supabase db reset (migraciones y seed desde cero)
         run: pnpm db:reset
       - name: supabase test db (pgTAP)
