@@ -628,3 +628,17 @@ async def test_a_group_message_is_not_a_patient_chat(ctx: WorkerContext, db: Dat
     payload["entry"][0]["changes"][0]["value"]["messages"][0]["group_id"] = "120363000000000000"
     await run_events(ctx, await deliver(db, payload))
     assert await rows(db, "select id from public.patients where phone = %s", (phone,)) == []
+
+
+async def test_dead_letters_can_be_replayed_once_the_cause_is_fixed(db: Database) -> None:
+    marker = uuid4().hex
+    async with db.unscoped_transaction() as conn:
+        await conn.execute(
+            "select pgmq.send(%s::text, %s::jsonb)",
+            (queue.DEAD_LETTERS, Jsonb({"kind": "event", "marker": marker, "failure": {"error": "X"}})),
+        )
+    assert await queue.replay_dead_letters(db, limit=1000) >= 1
+    assert await queued_count(db, {"marker": marker}, queue.DEAD_LETTERS) == 0
+    # Back in the queue as a new job, without the failure note.
+    assert await queued_count(db, {"marker": marker}) == 1
+    assert await queued_count(db, {"marker": marker, "failure": {}}) == 0

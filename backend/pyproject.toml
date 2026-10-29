@@ -42,7 +42,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "app/cli.py" = ["T201"]  # el comando le habla a la terminal
-"tests/**" = ["S101", "S105", "S106", "PLR0913", "S311"]
+"tests/**" = ["S101", "S105", "S106", "PLR0913", "PLR0917", "S311"]
 
 [tool.mypy]
 python_version = "3.12"

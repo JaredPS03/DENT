@@ -338,8 +338,9 @@ async def insert_outbound(  # noqa: PLR0913 - one value per column
         """
         insert into public.messages
           (clinic_id, conversation_id, direction, sender, type, content, send_payload,
-           billing_category, delivery_status, idempotency_key)
-        values (%s, %s, 'outbound', %s, %s, %s, %s, %s, %s, %s)
+           billing_category, delivery_status, idempotency_key, created_at, occurred_at)
+        -- clock_timestamp(): two messages queued in one transaction keep their order.
+        values (%s, %s, 'outbound', %s, %s, %s, %s, %s, %s, %s, clock_timestamp(), clock_timestamp())
         on conflict (clinic_id, idempotency_key) do nothing
         returning id, delivery_status
         """,
@@ -579,3 +580,90 @@ def _conversation(row: tuple[Any, ...] | None) -> Conversation:
     if row is None:
         raise LookupError("the conversation row is not there inside its own transaction")
     return Conversation(*row)
+
+
+# Panel -----------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovedTemplate:
+    name: str
+    language: str
+    category: BillingCategory
+
+
+async def approved_template(conn: AsyncConnection, name: str) -> ApprovedTemplate | None:
+    cursor = await conn.execute(
+        """
+        select name, language, category from public.templates
+        where name = %s and status = 'approved'
+        order by language = 'es_MX' desc
+        limit 1
+        """,
+        (name,),
+    )
+    row = await cursor.fetchone()
+    return ApprovedTemplate(*row) if row else None
+
+
+async def reopen_request_pending(conn: AsyncConnection, conversation_id: UUID, template_name: str) -> bool:
+    """Whether the template that asks the patient to come back was already sent (or queued) after
+    their last message and within the last 24 h: one is enough, and each one is charged."""
+    cursor = await conn.execute(
+        """
+        select exists (
+          select 1 from public.messages m
+          where m.conversation_id = %s and m.direction = 'outbound' and m.type = 'template'
+            and m.content = %s and m.delivery_status <> 'failed'
+            and m.created_at > now() - %s
+            and m.created_at > coalesce(
+              (select max(i.created_at) from public.messages i
+               where i.conversation_id = %s and i.direction = 'inbound'),
+              '-infinity')
+        )
+        """,
+        (conversation_id, template_name, CUSTOMER_SERVICE_WINDOW, conversation_id),
+    )
+    row = await cursor.fetchone()
+    return bool(row and row[0])
+
+
+async def patient_and_clinic_names(conn: AsyncConnection, conversation_id: UUID) -> tuple[str | None, str]:
+    cursor = await conn.execute(
+        """
+        select p.name, cl.name from public.conversations c
+        join public.patients p on p.id = c.patient_id
+        join public.clinics cl on cl.id = c.clinic_id
+        where c.id = %s
+        """,
+        (conversation_id,),
+    )
+    row = await cursor.fetchone()
+    if row is None:
+        raise LookupError("the conversation is not there inside its own transaction")
+    return row[0], row[1]
+
+
+async def database_now(conn: AsyncConnection) -> datetime:
+    return await _now(conn)
+
+
+async def insert_audit(  # noqa: PLR0913 - one value per column
+    conn: AsyncConnection,
+    *,
+    clinic_id: UUID,
+    user_id: UUID,
+    action: str,
+    table_name: str,
+    record_id: UUID,
+    changes: dict[str, Any],
+) -> None:
+    """Who did what from the panel. Ids and states only, never the text of a message."""
+    await conn.execute(
+        """
+        insert into public.audit_log
+          (clinic_id, actor_type, actor_user_id, action, table_name, record_id, changes)
+        values (%s, 'user', %s, %s, %s, %s, %s)
+        """,
+        (clinic_id, user_id, action, table_name, record_id, Jsonb(changes)),
+    )
