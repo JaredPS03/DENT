@@ -53,6 +53,11 @@ MAX_BATCH = 20
 # ...and transcribes at most this many voice notes (each one is paid): a flood of audios is
 # stored, and only the first ones are transcribed.
 MAX_TRANSCRIPTIONS_PER_TURN = 5
+# A conversation gets at most this many in 24 h, however its turns are spread out.
+MAX_TRANSCRIPTIONS_PER_DAY = 20
+# Audios over this size are stored but not transcribed. About 10 to 15 minutes of WhatsApp voice
+# note; Meta lets an audio weigh 16 MB, more than an hour, and transcription is paid by the minute.
+MAX_TRANSCRIBED_BYTES = 2 * 1024 * 1024
 
 KeepAlive = Callable[[], Awaitable[None]]
 
@@ -162,6 +167,7 @@ async def _answer(ctx: WorkerContext, lease: _Lease, renew: KeepAlive, *, final_
     queued."""
     async with ctx.db.clinic_transaction(lease.clinic_id) as conn:
         batch, now = await db.unhandled_inbound(conn, lease.conversation_id, limit=MAX_BATCH)
+        transcribed_today = await db.transcriptions_today(conn, lease.conversation_id) if batch else 0
     if not batch:
         return False
     arrivals = [message.created_at for message in batch]
@@ -169,7 +175,7 @@ async def _answer(ctx: WorkerContext, lease: _Lease, renew: KeepAlive, *, final_
         # The patient is still typing: _release schedules the turn for when the burst is over.
         return False
 
-    transcriptions_left = MAX_TRANSCRIPTIONS_PER_TURN
+    transcriptions_left = min(MAX_TRANSCRIPTIONS_PER_TURN, MAX_TRANSCRIPTIONS_PER_DAY - transcribed_today)
     prepared: list[db.PendingMessage] = []
     for message in batch:
         ready = await _prepare_media(
@@ -293,6 +299,12 @@ async def _transcribe(  # noqa: PLR0913 - the turn's state, passed explicitly
         if content is None and ctx.media_store is not None:
             content = await ctx.media_store.get(lease.clinic_id, message.media_path)
         if content is None:
+            return message
+        if len(content) > MAX_TRANSCRIBED_BYTES:
+            logger.info(
+                "bot.transcription_skipped",
+                extra={"message_id": str(message.id), "reason": "too_long", "bytes": len(content)},
+            )
             return message
         text = await ctx.transcriber.transcribe(content, mime_type, extension)
     except TranscriptionFailedError as failed:

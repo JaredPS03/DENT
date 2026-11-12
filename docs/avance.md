@@ -4,7 +4,7 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
 
 ## Estado actual
 
-- **Fase y hito:** Fase 1 · hito 1B terminado (WhatsApp de ida y vuelta, todavía sin IA); falta la confirmación de `revisor-seguridad` sobre las correcciones. La Fase 0 corre en paralelo: su código está terminado y falta su puerta con el número propio de Axon.
+- **Fase y hito:** Fase 1 · hito 1B cerrado (WhatsApp de ida y vuelta, todavía sin IA). La Fase 0 corre en paralelo: su código está terminado y falta su puerta con el número propio de Axon.
 - **Siguiente paso:**
   - Jared prueba el eco con el número de prueba siguiendo `docs/probar-eco.md`.
   - Claude empieza el 1C (el bot con IA) con el prompt de `prompts/fases.md`: primero el plan.
@@ -43,7 +43,7 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
     - Con la ventana cerrada sale `retomar_conversacion` una sola vez y el texto espera a que el paciente conteste; si no contesta en 24 h, queda como no enviado.
   - **Bot de eco temporal** (`ECHO_BOT_ENABLED`, prohibido en producción). Guía para probarlo: `docs/probar-eco.md`.
 - **Evidencia:**
-  - `uv run pytest`: **367 passed**, 182 más que en el 1A. Incluyen las pruebas con los ejemplos oficiales de Meta (`backend/tests/fixtures/meta`):
+  - `uv run pytest`: **370 passed**, 185 más que en el 1A. Incluyen las pruebas con los ejemplos oficiales de Meta (`backend/tests/fixtures/meta`):
     - un mensaje entregado dos veces se guarda y se contesta una;
     - mensajes en desorden se contestan en el orden en que se mandaron;
     - estados en desorden no retroceden;
@@ -56,6 +56,8 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
     - mensaje de grupo ignorado;
     - cinco workers sobre la misma conversación contestan una vez;
     - un worker que muere con el lock no deja al paciente sin respuesta, aunque otros dos turnos lo encuentren ocupado al mismo tiempo;
+    - 40 conexiones que mandan un byte a la vez no dejan fuera un aviso de Meta;
+    - el tope diario de transcripciones por conversación, y un audio muy largo que se guarda sin transcribir;
     - Meta caído se reintenta y envía una vez; un error de datos no se reintenta;
     - descarga a un host que no es de Meta, rechazada sin mandar el token;
     - cola de fallidos y su reenvío;
@@ -69,13 +71,19 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
     - un mensaje reclamado podía perderse si fallaba la renovación del lock; ahora se renueva antes de reclamar;
     - los ecos de coexistencia daban de alta como pacientes al laboratorio o a la familia; ahora no se guarda nada de quien no es paciente;
     - `retomar_conversacion` se habría mandado aunque Meta la pasara a marketing; ahora exige utilidad;
-    - una ráfaga multiplicaba los trabajos de forma cuadrática; ahora el que encuentra el chat ocupado se retira, y cada turno atiende 20 mensajes y transcribe 5 audios como máximo;
+    - una ráfaga multiplicaba los trabajos de forma cuadrática; ahora el que encuentra el chat ocupado se retira, y cada turno atiende 20 mensajes como máximo;
     - un aviso de 1000 elementos podía no guardarse nunca; ahora se guarda en lote (de 2.2 s a 0.09 s);
-    - cuerpos de 3 MB sin firma podían acaparar la memoria; ahora hay 16 lecturas a la vez y 10 s por lectura;
+    - cuerpos de 3 MB sin firma podían acaparar la memoria; ahora hay un tope de 48 MB en memoria y 10 s por lectura;
     - las llaves S3 no pasan por RLS; ahora cada lectura y escritura comprueba en código que la ruta sea del consultorio;
     - con `LOG_LEVEL=DEBUG`, botocore escribía los audios en los logs; esas librerías quedan siempre en WARNING.
   - **Revisión propia después de las correcciones:** si un worker moría antes de soltar el lock, lo pendiente esperaba a que el paciente volviera a escribir. Ahora el trabajo que encuentra el chat ocupado deja un turno de respaldo para cuando el lock vence. Solo cuenta como respaldo un turno que nadie ha tomado: la primera versión aceptaba uno en curso, y una prueba demostró que dos turnos simultáneos se cedían el respaldo y ninguno lo dejaba.
-  - **Confirmación de `revisor-seguridad`** sobre las correcciones: pendiente. El límite de uso cortó su revisión.
+  - **Confirmación de `revisor-seguridad`:**
+    - Cerró 8 de las 10 correcciones y confirmó el turno de respaldo sin problemas nuevos. Dice que también tapa dos huecos que había visto: el trabajo de un worker muerto que reaparecía con el lock vigente, y el reintento tras una falla al soltarlo.
+    - Encontró 2 hallazgos medios en dos de esas correcciones. Los dos quedaron corregidos, cada uno con una prueba que falla sin la corrección:
+      - **El tope del webhook contaba conexiones:** 16 conexiones que mandan un byte a la vez dejaban fuera a Meta, y con eso los mensajes de los pacientes, urgencias incluidas. Ahora cuenta bytes (48 MB), y bloquearlo exige subir unos 5 MB por segundo sin parar.
+      - **El costo de transcribir seguía creciendo con una avalancha repartida en varios turnos.** Ahora también hay un tope de 20 transcripciones por conversación al día, y los audios de más de 2 MB (unos 10 a 15 minutos) se guardan sin transcribir.
+    - No pudo correr las pruebas de integración porque en su sesión Docker no respondía. Las corrí yo antes y después de cada corrección.
+    - CI en verde con las correcciones ([run 13](https://github.com/JaredPS03/DENT/actions/runs/40822296192)) y con el turno de respaldo ([run 14](https://github.com/JaredPS03/DENT/actions/runs/43153612055)).
   - **`revisor-clinico`:** 13 observaciones.
     - Se aplicaron:
       - el eco dice que es una prueba de Axon;
@@ -89,7 +97,7 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
 - **Dependencia nueva, aprobada por Jared:** `boto3`.
 - **Pendiente:**
   - **Jared, antes de audios reales:** firmar el DPA de OpenAI y pedir cero retención; mencionar en el aviso de privacidad que la transcripción se procesa fuera de México, y que lo valide un abogado; probar que OpenAI acepta las notas OGG/Opus.
-  - **1C:** el bot con IA reemplaza el eco. Pasa aquí, desde el 1A, el tope de largo para el motivo de cancelación cuando lo mande el bot.
+  - **1C:** el bot con IA reemplaza el eco. Una nota de voz sin transcribir (por un tope, su tamaño o una falla) debe pasar a una persona, porque podría ser una urgencia. Pasa aquí, desde el 1A, el tope de largo para el motivo de cancelación cuando lo mande el bot.
   - **1D:**
     - el medidor de topes con lo que Meta cobra;
     - los avisos de sistema (número que cambia de teléfono y regenera su BSUID);
@@ -100,6 +108,7 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
     - Al dejar un mensaje en espera, avisar hasta cuándo puede salir y que evite "hoy" o "mañana"; permitir borrarlo.
     - Avisar a la asistente cuando un mensaje en espera vence o cuando el paciente vuelve después.
   - **1D:** alerta por mensajes reclamados sin id de Meta (resultado incierto) que lleven más de unos minutos.
+  - **1F:** con la IP real detrás del proxy (decisión 005), un tope de lecturas por dirección en el webhook.
   - **Preguntas para Jared (revisor-clinico), antes del 1C:**
     - ¿El filtro de urgencia corre aunque el bot esté en pausa o el chat esté tomado? Hoy la especificación revisa la pausa primero.
     - ¿Marcar contactos como "no es paciente" desde el panel?

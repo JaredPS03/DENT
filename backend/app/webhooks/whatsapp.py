@@ -8,7 +8,6 @@ the deadline, Meta gets a 503 and retries later; stored items are deduplicated, 
 duplicates them.
 """
 
-import asyncio
 import hmac
 import json
 import logging
@@ -34,10 +33,12 @@ router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 # Meta sends up to 1000 updates per notification and documents payloads of up to 3 MB.
 MAX_BODY_BYTES = 3 * 1024 * 1024
-# Bodies read at once, and how long reading one may take. Unsigned bodies are held in memory until
-# the signature is checked: without these, a few hundred slow 3 MB uploads would exhaust the
-# instance that also serves /api. Meta retries a 503 or a 408 later.
-MAX_CONCURRENT_READS = 16
+# Unsigned bodies are held in memory until the signature is checked: without a cap, a few hundred
+# slow 3 MB uploads would exhaust the instance that also serves /api. The cap counts bytes, not
+# requests (as much as 16 full bodies), so uploads that send a byte at a time hold almost nothing
+# and cannot keep Meta out: filling it takes sending about 5 MB every second. Each body also has a
+# deadline. Meta retries a 503 or a 408 later.
+MAX_BUFFERED_BYTES = 16 * MAX_BODY_BYTES
 READ_DEADLINE_SECONDS = 10.0
 # Routing and storing one webhook never takes longer than this, even if the database hangs.
 STORE_DEADLINE_SECONDS = 8.0
@@ -64,7 +65,25 @@ async def verify_subscription(request: Request, settings: SettingsDep) -> PlainT
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
 
-async def _read_body_capped(request: Request, limit: int) -> bytes:
+class BodyBudget:
+    """Bytes of webhook bodies being read right now, across requests. Nothing awaits between the
+    check and the update, so on the event loop each step is atomic."""
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self.used = 0
+
+    def take(self, size: int) -> bool:
+        if self.used + size > self.limit:
+            return False
+        self.used += size
+        return True
+
+    def give_back(self, size: int) -> None:
+        self.used -= size
+
+
+async def _read_body_capped(request: Request, limit: int, budget: BodyBudget) -> bytes:
     declared = request.headers.get("content-length")
     if declared is not None:
         if not declared.isdigit():
@@ -72,11 +91,17 @@ async def _read_body_capped(request: Request, limit: int) -> bytes:
         if int(declared) > limit:
             raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE)
     body = bytearray()
-    async for chunk in request.stream():
-        body.extend(chunk)
-        if len(body) > limit:
-            raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE)
-    return bytes(body)
+    try:
+        async for chunk in request.stream():
+            if not budget.take(len(chunk)):
+                logger.warning("whatsapp_webhook.busy")
+                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+            body.extend(chunk)
+            if len(body) > limit:
+                raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE)
+        return bytes(body)
+    finally:
+        budget.give_back(len(body))
 
 
 def _parse(raw_body: bytes) -> tuple[list[WebhookItem], list[UnroutableChange]]:
@@ -88,16 +113,12 @@ def _parse(raw_body: bytes) -> tuple[list[WebhookItem], list[UnroutableChange]]:
 
 @router.post("/whatsapp")
 async def receive(request: Request, settings: SettingsDep, db: DatabaseDep) -> Response:
-    reads = cast(asyncio.Semaphore, request.app.state.webhook_reads)
-    if reads.locked():
-        logger.warning("whatsapp_webhook.busy")
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
-    async with reads:
-        try:
-            raw_body = await within(READ_DEADLINE_SECONDS, _read_body_capped(request, MAX_BODY_BYTES))
-        except TimeoutError:
-            logger.warning("whatsapp_webhook.read_deadline_exceeded")
-            raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT) from None
+    budget = cast(BodyBudget, request.app.state.webhook_body_budget)
+    try:
+        raw_body = await within(READ_DEADLINE_SECONDS, _read_body_capped(request, MAX_BODY_BYTES, budget))
+    except TimeoutError:
+        logger.warning("whatsapp_webhook.read_deadline_exceeded")
+        raise HTTPException(status_code=status.HTTP_408_REQUEST_TIMEOUT) from None
 
     signature = request.headers.get("x-hub-signature-256")
     if not verify_meta_signature(raw_body, signature, settings.whatsapp_app_secret.get_secret_value()):

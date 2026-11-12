@@ -760,6 +760,40 @@ async def test_a_flood_of_voice_notes_only_transcribes_the_first_ones(
     assert len(meta.sent) == 1  # still one answer for the whole burst
 
 
+async def test_voice_notes_spread_over_the_day_stop_being_transcribed_at_the_daily_cap(
+    settings: Settings, db: Database, meta: FakeMeta, phone: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(turns, "MAX_TRANSCRIPTIONS_PER_DAY", 3)
+    transcriber = FakeTranscription("hola")
+    ctx = make_context(settings, db, meta, transcriber=transcriber)
+    for _ in range(2):  # two bursts, each one under the cap per turn
+        for _ in range(2):
+            media_id = str(uuid4().int)[:16]
+            meta.media[media_id] = (VOICE_NOTE, "audio/ogg; codecs=opus")
+            await run_events(ctx, await deliver(db, audio_from(phone, media_id)))
+        await take_turns(ctx, await conversation_of(db, phone))
+
+    assert len(transcriber.calls) == 3
+    assert len(meta.sent) == 2  # every burst still gets its answer
+
+
+async def test_a_very_long_audio_is_stored_but_not_transcribed(
+    settings: Settings, db: Database, meta: FakeMeta, phone: str
+) -> None:
+    store = MemoryStore()
+    transcriber = FakeTranscription("hola")
+    ctx = make_context(settings, db, meta, store=store, transcriber=transcriber)
+    media_id = str(uuid4().int)[:16]
+    meta.media[media_id] = (VOICE_NOTE + b"\x00" * (2 * 1024 * 1024), "audio/ogg; codecs=opus")
+    await run_events(ctx, await deliver(db, audio_from(phone, media_id)))
+
+    await take_turns(ctx, await conversation_of(db, phone))
+
+    assert transcriber.calls == []
+    assert len(store.files) == 1
+    assert meta.texts() == [f"{ECHO} Recibí: (nota de voz sin transcribir)"]
+
+
 async def test_a_worker_that_dies_holding_the_lease_does_not_strand_the_patient(
     ctx: WorkerContext, db: Database, meta: FakeMeta, phone: str
 ) -> None:

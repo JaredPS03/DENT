@@ -18,7 +18,8 @@ En la documentación de Meta se confirmaron:
 
 **Cola y worker**
 - El webhook guarda cada aviso y encola solo su id, en la misma transacción, con dos idas y vueltas a la base por consultorio aunque el aviso traiga 1000 elementos.
-- El webhook lee como máximo 16 cuerpos a la vez y cada lectura tiene 10 s. Pasado eso responde 503 o 408 y Meta reintenta: un aviso sin firmar no puede acaparar la memoria de la instancia.
+- El webhook tiene en memoria como máximo 48 MB de cuerpos sin firmar a la vez (16 avisos de 3 MB), y cada lectura tiene 10 s. Pasado eso responde 503 o 408 y Meta reintenta: un aviso sin firmar no puede acaparar la memoria de la instancia.
+- El tope cuenta bytes y no conexiones: una conexión que manda un byte a la vez casi no ocupa nada y no deja fuera a Meta. Para llenarlo hay que subir unos 5 MB cada segundo. La primera versión contaba 16 conexiones, y un solo portátil la bloqueaba (revisor-seguridad).
 - El worker (`python -m app.jobs.worker`) toma hasta `WORKER_CONCURRENCY` trabajos a la vez. Cada trabajo queda oculto 120 s, más que un turno completo.
 - Si un trabajo falla, se reintenta con espera exponencial (5, 10, 20… hasta 300 s, con variación aleatoria). Tras 8 intentos pasa a `whatsapp_inbound_dlq` con su tipo de error. `python -m app.cli replay-dead-letters` lo devuelve a la cola cuando la causa ya se corrigió.
 - Cada trabajo es idempotente por lo que señala:
@@ -31,7 +32,11 @@ En la documentación de Meta se confirmaron:
 - Si otro worker tiene el lock, el trabajo termina sin hacer nada. Quien lo tiene, al soltarlo, bloquea la fila de la conversación y revisa si quedó algo pendiente (un mensaje del paciente o uno por enviar); si quedó, programa el siguiente turno. Así nada se pierde y una ráfaga no se convierte en cientos de trabajos tocando cada 2 s (revisor-seguridad).
 - Si quien tiene el lock muere antes de soltarlo, el trabajo que lo encontró ocupado deja programado un turno de respaldo para 1 s después de que venza, salvo que ya haya uno esperando para entonces que ningún worker haya tomado: uno que ya corre puede estar encontrando el chat ocupado también, y entonces termina sin volver. Así lo pendiente no espera a que el paciente vuelva a escribir.
 - **Ráfagas:** se contesta cuando el paciente lleva 4 s sin escribir, o a los 15 s de su primer mensaje si no para. Los tiempos se miden con el reloj de la base, el mismo de la cola.
-- Cada turno atiende como máximo 20 mensajes del paciente y transcribe como máximo 5 notas de voz; lo demás queda para el turno siguiente o se guarda sin transcribir. Así una avalancha de audios no acapara el worker ni dispara el costo.
+- Cada turno atiende como máximo 20 mensajes del paciente; lo demás queda para el turno siguiente.
+- La transcripción tiene tres topes. Lo que se pasa se guarda sin transcribir. Así una avalancha de audios no acapara el worker ni dispara el costo (revisor-seguridad):
+  - 5 notas de voz por turno;
+  - 20 por conversación en 24 h;
+  - audios de hasta 2 MB, unos 10 a 15 minutos de nota de voz. Meta deja que un audio pese 16 MB, más de una hora.
 - Si el bot está apagado en el consultorio, en pausa o el chat lo tomó una persona, el mensaje solo llega a la bandeja.
 
 **Envíos**
@@ -112,6 +117,7 @@ En la documentación de Meta se confirmaron:
   - mencionar en el aviso de privacidad que la transcripción se procesa fuera de México, y que lo valide un abogado;
   - probar con notas reales que aceptan el formato OGG/Opus. La documentación de OpenAI se contradice; si no lo aceptan, se convierte a WebM/Opus sin recodificar.
 - **Quedan para hitos siguientes:**
-  - 1C: el bot con IA reemplaza el eco.
+  - 1C: el bot con IA reemplaza el eco. Una nota de voz sin transcribir (por un tope, su tamaño o una falla) pasa a una persona: podría ser una urgencia.
   - 1D: el medidor de topes cuenta lo cobrable; el número que cambia de teléfono (y regenera su BSUID) se atiende con los avisos de sistema; la limpieza de audios y avisos vencidos; el aviso de mensajes sin respuesta en 5 min.
   - 1E: las URLs firmadas del panel y Realtime de la bandeja.
+  - 1F: con la IP real detrás del proxy (decisión 005), un tope de lecturas por dirección en el webhook.

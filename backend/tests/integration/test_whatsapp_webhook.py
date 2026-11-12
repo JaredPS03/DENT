@@ -162,7 +162,7 @@ def test_body_of_exactly_three_megabytes_is_read(client: TestClient) -> None:
 
 
 def test_while_too_many_bodies_are_being_read_meta_is_asked_to_retry(client: TestClient) -> None:
-    client.app.state.webhook_reads = asyncio.Semaphore(0)  # type: ignore[attr-defined]
+    client.app.state.webhook_body_budget = whatsapp_webhook.BodyBudget(1)  # type: ignore[attr-defined]
     body = b"{}"
     assert client.post(URL, content=body, headers={"x-hub-signature-256": sign(body)}).status_code == 503
 
@@ -183,6 +183,29 @@ async def test_a_body_that_arrives_too_slowly_is_cut_off(monkeypatch: pytest.Mon
             URL, content=trickle(), headers={"x-hub-signature-256": "sha256=" + "0" * 64}
         )
     assert response.status_code == 408
+
+
+@pytest.mark.anyio
+async def test_slow_bodies_do_not_keep_meta_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(whatsapp_webhook, "READ_DEADLINE_SECONDS", 0.5)
+    app = create_app(make_settings())
+    app.state.db = None  # no body here gets past the signature
+
+    async def trickle() -> AsyncIterator[bytes]:
+        yield b"{"
+        await asyncio.sleep(2)
+        yield b"}"
+
+    unsigned = {"x-hub-signature-256": "sha256=" + "0" * 64}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as http:
+        slow = [asyncio.create_task(http.post(URL, content=trickle(), headers=unsigned)) for _ in range(40)]
+        await asyncio.sleep(0.1)  # all of them are being read, a byte each
+        response = await http.post(URL, content=b"{}", headers=unsigned)
+        slow_codes = {answer.status_code for answer in await asyncio.gather(*slow)}
+    # Read in full despite them: it gets to the signature check instead of a 503.
+    assert response.status_code == 401
+    assert slow_codes == {408}
+    assert app.state.webhook_body_budget.used == 0  # every request gave its bytes back
 
 
 def test_a_thousand_updates_in_one_notification_are_stored_and_queued(

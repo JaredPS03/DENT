@@ -367,6 +367,20 @@ async def set_transcription(conn: AsyncConnection, message_id: UUID, transcripti
     )
 
 
+async def transcriptions_today(conn: AsyncConnection, conversation_id: UUID) -> int:
+    """Voice notes of the conversation transcribed in the last 24 h: each one was paid."""
+    cursor = await conn.execute(
+        """
+        select count(*) from public.messages
+        where conversation_id = %s and transcription is not null
+          and created_at > now() - interval '24 hours'
+        """,
+        (conversation_id,),
+    )
+    row = await cursor.fetchone()
+    return int(row[0]) if row else 0
+
+
 # Outbound messages -------------------------------------------------------------------------------
 
 
