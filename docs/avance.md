@@ -82,7 +82,7 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
     - Encontró 2 hallazgos medios en dos de esas correcciones. Los dos quedaron corregidos, cada uno con una prueba que falla sin la corrección:
       - **El tope del webhook contaba conexiones:** 16 conexiones que mandan un byte a la vez dejaban fuera a Meta, y con eso los mensajes de los pacientes, urgencias incluidas. Ahora cuenta bytes (48 MB), y bloquearlo exige subir unos 5 MB por segundo sin parar.
       - **El costo de transcribir seguía creciendo con una avalancha repartida en varios turnos.** Ahora también hay un tope de 20 transcripciones por conversación al día, y los audios de más de 2 MB (unos 10 a 15 minutos) se guardan sin transcribir.
-    - No pudo correr las pruebas de integración porque en su sesión Docker no respondía. Las corrí yo antes y después de cada corrección.
+    - Confirmó las dos correcciones (`99cbbef`) sin problemas nuevos, y esta vez corrió él mismo las 64 pruebas del webhook y de la ida y vuelta.
     - CI en verde con las correcciones ([run 13](https://github.com/JaredPS03/DENT/actions/runs/40822296192)) y con el turno de respaldo ([run 14](https://github.com/JaredPS03/DENT/actions/runs/43153612055)).
   - **`revisor-clinico`:** 13 observaciones.
     - Se aplicaron:
@@ -108,7 +108,8 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
     - Al dejar un mensaje en espera, avisar hasta cuándo puede salir y que evite "hoy" o "mañana"; permitir borrarlo.
     - Avisar a la asistente cuando un mensaje en espera vence o cuando el paciente vuelve después.
   - **1D:** alerta por mensajes reclamados sin id de Meta (resultado incierto) que lleven más de unos minutos.
-  - **1F:** con la IP real detrás del proxy (decisión 005), un tope de lecturas por dirección en el webhook.
+  - **1F:** con la IP real detrás del proxy (decisión 005), un tope de lecturas por dirección en el webhook. Una inundación sostenida de unos 5 MB/s todavía provoca 503.
+  - **1D:** un tope diario de transcripciones por consultorio en el medidor. Hoy el tope es por conversación, así que alguien con muchos números puede sumar costo.
   - **Preguntas para Jared (revisor-clinico), antes del 1C:**
     - ¿El filtro de urgencia corre aunque el bot esté en pausa o el chat esté tomado? Hoy la especificación revisa la pausa primero.
     - ¿Marcar contactos como "no es paciente" desde el panel?
