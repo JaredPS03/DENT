@@ -4,7 +4,7 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
 
 ## Estado actual
 
-- **Fase y hito:** Fase 1 · hito 1B cerrado (WhatsApp de ida y vuelta, todavía sin IA). La Fase 0 corre en paralelo: su código está terminado y falta su puerta con el número propio de Axon.
+- **Fase y hito:** Fase 1 · hito 1B terminado (WhatsApp de ida y vuelta, todavía sin IA); falta la confirmación de `revisor-seguridad` sobre las correcciones. La Fase 0 corre en paralelo: su código está terminado y falta su puerta con el número propio de Axon.
 - **Siguiente paso:**
   - Jared prueba el eco con el número de prueba siguiendo `docs/probar-eco.md`.
   - Claude empieza el 1C (el bot con IA) con el prompt de `prompts/fases.md`: primero el plan.
@@ -43,7 +43,7 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
     - Con la ventana cerrada sale `retomar_conversacion` una sola vez y el texto espera a que el paciente conteste; si no contesta en 24 h, queda como no enviado.
   - **Bot de eco temporal** (`ECHO_BOT_ENABLED`, prohibido en producción). Guía para probarlo: `docs/probar-eco.md`.
 - **Evidencia:**
-  - `uv run pytest`: **338 passed**, 153 más que en el 1A. Incluyen las pruebas con los ejemplos oficiales de Meta (`backend/tests/fixtures/meta`):
+  - `uv run pytest`: **367 passed**, 182 más que en el 1A. Incluyen las pruebas con los ejemplos oficiales de Meta (`backend/tests/fixtures/meta`):
     - un mensaje entregado dos veces se guarda y se contesta una;
     - mensajes en desorden se contestan en el orden en que se mandaron;
     - estados en desorden no retroceden;
@@ -55,14 +55,36 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
     - paciente solo con BSUID;
     - mensaje de grupo ignorado;
     - cinco workers sobre la misma conversación contestan una vez;
+    - un worker que muere con el lock no deja al paciente sin respuesta, aunque otros dos turnos lo encuentren ocupado al mismo tiempo;
     - Meta caído se reintenta y envía una vez; un error de datos no se reintenta;
     - descarga a un host que no es de Meta, rechazada sin mandar el token;
     - cola de fallidos y su reenvío;
     - la API completa con el worker enviando;
     - el bucket real por S3 rechaza tipos no permitidos y llaves falsas.
-  - ruff, formato y mypy limpios. `pnpm db:test`: **336 pruebas pgTAP, PASS**, 20 nuevas. `pip-audit` y `pnpm audit --prod`: sin vulnerabilidades. gitleaks: sin secretos. `pnpm panel:check`: limpio.
-  - Base local arrancada desde cero con Storage, como hará CI: las 8 migraciones aplican y el bucket queda privado.
-  - **Revisores:** pendiente; se completa abajo.
+  - ruff, formato y mypy limpios. `pnpm db:test`: **337 pruebas pgTAP, PASS**, 21 nuevas. `pip-audit` y `pnpm audit --prod`: sin vulnerabilidades. gitleaks: sin secretos. `pnpm panel:check`: limpio.
+  - Base local arrancada desde cero con Storage, como lo hace CI: las migraciones aplican y el bucket queda privado. CI en verde con Storage: [run 12](https://github.com/JaredPS03/DENT/actions/runs/40821177098).
+  - **`revisor-seguridad`:** sin fugas entre consultorios. 1 hallazgo alto y 9 medios, todos corregidos con su prueba:
+    - **(alto)** un número reciclado caía en el expediente del dueño anterior; ahora es un paciente nuevo, y del bloque `contacts` solo se usa el del remitente;
+    - un 5xx de Meta podía reenviar un mensaje que sí salió; ahora solo se reintenta con los códigos de "ahora no";
+    - un mensaje reclamado podía perderse si fallaba la renovación del lock; ahora se renueva antes de reclamar;
+    - los ecos de coexistencia daban de alta como pacientes al laboratorio o a la familia; ahora no se guarda nada de quien no es paciente;
+    - `retomar_conversacion` se habría mandado aunque Meta la pasara a marketing; ahora exige utilidad;
+    - una ráfaga multiplicaba los trabajos de forma cuadrática; ahora el que encuentra el chat ocupado se retira, y cada turno atiende 20 mensajes y transcribe 5 audios como máximo;
+    - un aviso de 1000 elementos podía no guardarse nunca; ahora se guarda en lote (de 2.2 s a 0.09 s);
+    - cuerpos de 3 MB sin firma podían acaparar la memoria; ahora hay 16 lecturas a la vez y 10 s por lectura;
+    - las llaves S3 no pasan por RLS; ahora cada lectura y escritura comprueba en código que la ruta sea del consultorio;
+    - con `LOG_LEVEL=DEBUG`, botocore escribía los audios en los logs; esas librerías quedan siempre en WARNING.
+  - **Revisión propia después de las correcciones:** si un worker moría antes de soltar el lock, lo pendiente esperaba a que el paciente volviera a escribir. Ahora el trabajo que encuentra el chat ocupado deja un turno de respaldo para cuando el lock vence. Solo cuenta como respaldo un turno que nadie ha tomado: la primera versión aceptaba uno en curso, y una prueba demostró que dos turnos simultáneos se cedían el respaldo y ninguno lo dejaba.
+  - **Confirmación de `revisor-seguridad`** sobre las correcciones: pendiente. El límite de uso cortó su revisión.
+  - **`revisor-clinico`:** 13 observaciones.
+    - Se aplicaron:
+      - el eco dice que es una prueba de Axon;
+      - el saludo de `retomar_conversacion` usa el primer nombre, sin títulos ni mayúsculas;
+      - textos claros para la asistente en el 409 y el 422;
+      - más vocabulario dental en la pista de transcripción, con una prueba de nota en silencio en la guía;
+      - la pausa de coexistencia baja de 7 días a 24 h como máximo (migración nueva);
+      - la plantilla exige utilidad.
+    - Las que son decisiones de producto quedan abajo como preguntas para Jared.
 - **Decisiones:** [006 · WhatsApp de ida y vuelta](decisiones/006-whatsapp-de-ida-y-vuelta.md). Especificación al día: tres funciones `security definer` y el BSUID. Regla de seguridad: tope de 3 MB en el webhook.
 - **Dependencia nueva, aprobada por Jared:** `boto3`.
 - **Pendiente:**
@@ -73,7 +95,16 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
     - los avisos de sistema (número que cambia de teléfono y regenera su BSUID);
     - limpieza de audios y avisos vencidos;
     - alerta de mensajes sin respuesta en 5 min y de la cola de fallidos.
-  - **1E:** `GET /api/medios/{id}` con URLs firmadas, la bandeja con Realtime y las pantallas de tomar, soltar y escribir.
+  - **1E:**
+    - `GET /api/medios/{id}` con URLs firmadas, la bandeja con Realtime y las pantallas de tomar, soltar y escribir.
+    - Al dejar un mensaje en espera, avisar hasta cuándo puede salir y que evite "hoy" o "mañana"; permitir borrarlo.
+    - Avisar a la asistente cuando un mensaje en espera vence o cuando el paciente vuelve después.
+  - **1D:** alerta por mensajes reclamados sin id de Meta (resultado incierto) que lleven más de unos minutos.
+  - **Preguntas para Jared (revisor-clinico), antes del 1C:**
+    - ¿El filtro de urgencia corre aunque el bot esté en pausa o el chat esté tomado? Hoy la especificación revisa la pausa primero.
+    - ¿Marcar contactos como "no es paciente" desde el panel?
+    - ¿Cambiar el texto de `retomar_conversacion`? Se propone "Hola, somos de {{1}}. Tenemos un mensaje para ti sobre lo que nos escribiste.", con el botón "Ver mensaje", y una versión de usted. Las plantillas todavía no se mandan a Meta.
+    - Cuando el paciente vuelve después de 24 h, ¿se mandan igual los mensajes en espera vencidos?
 
 ### 2026-10-25 · Hito 1A · Agenda y disponibilidad
 

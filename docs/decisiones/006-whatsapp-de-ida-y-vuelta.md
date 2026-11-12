@@ -29,6 +29,7 @@ En la documentación de Meta se confirmaron:
 **Turnos**
 - Cada conversación tiene un lock de turno con vencimiento de 120 s: dos columnas que se toman y se sueltan en transacciones cortas. Si un worker muere, el lock vence solo.
 - Si otro worker tiene el lock, el trabajo termina sin hacer nada. Quien lo tiene, al soltarlo, bloquea la fila de la conversación y revisa si quedó algo pendiente (un mensaje del paciente o uno por enviar); si quedó, programa el siguiente turno. Así nada se pierde y una ráfaga no se convierte en cientos de trabajos tocando cada 2 s (revisor-seguridad).
+- Si quien tiene el lock muere antes de soltarlo, el trabajo que lo encontró ocupado deja programado un turno de respaldo para 1 s después de que venza, salvo que ya haya uno esperando para entonces que ningún worker haya tomado: uno que ya corre puede estar encontrando el chat ocupado también, y entonces termina sin volver. Así lo pendiente no espera a que el paciente vuelva a escribir.
 - **Ráfagas:** se contesta cuando el paciente lleva 4 s sin escribir, o a los 15 s de su primer mensaje si no para. Los tiempos se miden con el reloj de la base, el mismo de la cola.
 - Cada turno atiende como máximo 20 mensajes del paciente y transcribe como máximo 5 notas de voz; lo demás queda para el turno siguiente o se guarda sin transcribir. Así una avalancha de audios no acapara el worker ni dispara el costo.
 - Si el bot está apagado en el consultorio, en pausa o el chat lo tomó una persona, el mensaje solo llega a la bandeja.

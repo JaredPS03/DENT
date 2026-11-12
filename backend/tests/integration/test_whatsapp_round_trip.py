@@ -733,9 +733,11 @@ async def test_a_message_that_arrives_mid_turn_is_answered_after_it(
         assert await conversations.acquire_lease(conn, conversation_id, holder.token, 60) == "acquired"
 
     match = {"kind": "conversation", "conversation_id": str(conversation_id)}
-    await run_matching(ctx, match)  # finds the lease busy and steps aside, without piling up jobs
+    # Finds the lease busy and steps aside, leaving one safety-net turn for when it expires.
+    await run_matching(ctx, match, passes=1)
+    await run_matching(ctx, match, now=False, passes=1)  # more knocks add nothing
     assert meta.sent == []
-    assert await queued_count(db, match) == 0
+    assert await queued_count(db, match) == 1
 
     await turns._release(ctx, holder)  # the holder lets go and sees the message waiting
     await run_matching(ctx, match)
@@ -756,3 +758,59 @@ async def test_a_flood_of_voice_notes_only_transcribes_the_first_ones(
 
     assert len(transcriber.calls) == turns.MAX_TRANSCRIPTIONS_PER_TURN
     assert len(meta.sent) == 1  # still one answer for the whole burst
+
+
+async def test_a_worker_that_dies_holding_the_lease_does_not_strand_the_patient(
+    ctx: WorkerContext, db: Database, meta: FakeMeta, phone: str
+) -> None:
+    await run_events(ctx, await deliver(db, text_from(phone)))
+    conversation_id = await conversation_of(db, phone)
+    await patient_pauses(db, conversation_id)
+    async with db.clinic_transaction(CLINIC_A) as conn:
+        assert await conversations.acquire_lease(conn, conversation_id, uuid4(), 60) == "acquired"
+    match = {"kind": "conversation", "conversation_id": str(conversation_id)}
+    await run_matching(ctx, match, passes=1)  # busy: the holder never comes back
+    assert meta.sent == []
+
+    async with db.clinic_transaction(CLINIC_A) as conn:  # its lease runs out
+        await conn.execute(
+            "update public.conversations set turn_lease_expires_at = now() - interval '1 second'"
+            " where id = %s",
+            (conversation_id,),
+        )
+    await run_matching(ctx, match)
+    assert len(meta.sent) == 1
+
+
+async def test_two_turns_that_find_the_chat_busy_at_once_still_leave_a_safety_net(
+    ctx: WorkerContext, db: Database, meta: FakeMeta, phone: str
+) -> None:
+    await run_events(ctx, await deliver(db, text_from(phone)))
+    conversation_id = await conversation_of(db, phone)
+    await patient_pauses(db, conversation_id)
+    async with db.clinic_transaction(CLINIC_A) as conn:
+        assert await conversations.acquire_lease(conn, conversation_id, uuid4(), 60) == "acquired"
+    match = {"kind": "conversation", "conversation_id": str(conversation_id)}
+    async with db.unscoped_transaction() as conn:  # one worker takes the queued turn...
+        await conn.execute(
+            "update pgmq.q_whatsapp_inbound set vt = clock_timestamp() where message @> %s", (Jsonb(match),)
+        )
+        cursor = await conn.execute(
+            "select msg_id from pgmq.read(%s::text, %s::integer, 1, %s::jsonb)",
+            (queue.QUEUE, queue.VISIBILITY_SECONDS, Jsonb(match)),
+        )
+        [(in_flight,)] = await cursor.fetchall()
+        # ...while a second message's turn arrives for another worker.
+        await queue.enqueue(conn, ConversationJob(clinic_id=CLINIC_A, conversation_id=conversation_id))
+    await run_matching(ctx, match, now=False, passes=1)  # busy
+    await queue.done(db, in_flight)  # the first one, busy too, saw the second and left
+    assert meta.sent == []
+
+    async with db.clinic_transaction(CLINIC_A) as conn:  # the holder never comes back
+        await conn.execute(
+            "update public.conversations set turn_lease_expires_at = now() - interval '1 second'"
+            " where id = %s",
+            (conversation_id,),
+        )
+    await run_matching(ctx, match)
+    assert len(meta.sent) == 1

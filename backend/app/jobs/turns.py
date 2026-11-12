@@ -16,13 +16,15 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from uuid import UUID, uuid4
 
+from psycopg import AsyncConnection
+
 from app.bot.echo import echo_reply
 from app.bot.transcription import TranscriptionFailedError, TranscriptionUnavailableError
 from app.core.config import Settings
 from app.db import conversations as db
 from app.db.media_store import MediaStoreError, media_path
 from app.jobs.context import WorkerContext
-from app.jobs.queue import ConversationJob, ExpireHoldJob, enqueue
+from app.jobs.queue import ConversationJob, ExpireHoldJob, enqueue, turn_scheduled_from
 from app.jobs.timing import burst_ready
 from app.whatsapp import outbound
 from app.whatsapp.client import (
@@ -80,6 +82,8 @@ async def handle_conversation(
     lease = _Lease(job.clinic_id, job.conversation_id, uuid4())
     async with ctx.db.clinic_transaction(lease.clinic_id) as conn:
         outcome = await db.acquire_lease(conn, lease.conversation_id, lease.token, LEASE_SECONDS)
+        if outcome == "busy":
+            await _turn_after_lease(conn, job)
     if outcome != "acquired":
         # Busy: this job is done. Whoever holds the lease looks again before letting it go
         # (_release), so nothing this job came for is left behind, and a burst of messages never
@@ -102,6 +106,18 @@ async def handle_conversation(
         raise
     # A failure here retries the job: something may be waiting that nobody else will pick up.
     await _release(ctx, lease)
+
+
+async def _turn_after_lease(conn: AsyncConnection, job: ConversationJob) -> None:
+    """Safety net in case the holder dies or cannot let go: one turn right after its lease
+    expires, unless one is already queued for then."""
+    expiry = await db.lease_expiry(conn, job.conversation_id)
+    if expiry is None:
+        return
+    expires_at, now = expiry
+    if await turn_scheduled_from(conn, job.conversation_id, expires_at):
+        return
+    await enqueue(conn, job, delay_seconds=math.ceil((expires_at - now).total_seconds()) + 1)
 
 
 async def _release(ctx: WorkerContext, lease: _Lease) -> None:

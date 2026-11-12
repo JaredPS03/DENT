@@ -11,6 +11,7 @@ dead-letter queue, with its error type, for a person to look at.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -79,6 +80,24 @@ async def enqueue(conn: AsyncConnection, job: Job, delay_seconds: int = 0) -> No
         "select pgmq.send(%s::text, %s::jsonb, %s::integer)",
         (QUEUE, Jsonb(job.model_dump(mode="json")), max(0, delay_seconds)),
     )
+
+
+async def turn_scheduled_from(conn: AsyncConnection, conversation_id: UUID, moment: datetime) -> bool:
+    """Whether a turn of the conversation is waiting in the queue to start at `moment` or later.
+
+    Only turns no worker has taken yet count (`read_ct = 0`): one already running may be finding
+    the conversation busy too, and then it ends without coming back."""
+    cursor = await conn.execute(
+        """
+        select exists (
+          select 1 from pgmq.q_whatsapp_inbound
+          where message @> %s and vt >= %s and read_ct = 0
+        )
+        """,
+        (Jsonb({"kind": "conversation", "conversation_id": str(conversation_id)}), moment),
+    )
+    row = await cursor.fetchone()
+    return bool(row and row[0])
 
 
 async def read(db: Database, quantity: int) -> list[QueuedJob]:

@@ -583,6 +583,19 @@ async def acquire_lease(
     return "acquired"
 
 
+async def lease_expiry(conn: AsyncConnection, conversation_id: UUID) -> tuple[datetime, datetime] | None:
+    """When the current lease expires, and the database's clock."""
+    cursor = await conn.execute(
+        """
+        select turn_lease_expires_at, now() from public.conversations
+        where id = %s and turn_lease_expires_at is not null
+        """,
+        (conversation_id,),
+    )
+    row = await cursor.fetchone()
+    return (row[0], row[1]) if row else None
+
+
 async def renew_lease(conn: AsyncConnection, conversation_id: UUID, token: UUID, seconds: int) -> bool:
     cursor = await conn.execute(
         """
