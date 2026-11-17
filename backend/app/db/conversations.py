@@ -43,6 +43,7 @@ class PendingMessage:
     media_mime_type: str | None
     media_path: str | None
     created_at: datetime
+    reply_id: str | None = None  # the button or list row the patient tapped
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,7 +303,7 @@ async def unhandled_inbound(
     cursor = await conn.execute(
         """
         select id, type, content, transcription, meta_media_id, media_mime_type, media_path, created_at,
-               now()
+               reply_id, now()
         from public.messages
         where conversation_id = %s and direction = 'inbound' and handled_at is null
         order by occurred_at, created_at, id
@@ -396,15 +397,16 @@ async def insert_outbound(  # noqa: PLR0913 - one value per column
     billing_category: BillingCategory,
     delivery_status: DeliveryStatus,
     idempotency_key: str,
+    prompt_version: str | None = None,
 ) -> OutboundMessage:
     """Queues a message to send. A second call with the same key finds the first one."""
     cursor = await conn.execute(
         """
         insert into public.messages
           (clinic_id, conversation_id, direction, sender, type, content, send_payload,
-           billing_category, delivery_status, idempotency_key, created_at, occurred_at)
+           billing_category, delivery_status, idempotency_key, prompt_version, created_at, occurred_at)
         -- clock_timestamp(): two messages queued in one transaction keep their order.
-        values (%s, %s, 'outbound', %s, %s, %s, %s, %s, %s, %s, clock_timestamp(), clock_timestamp())
+        values (%s, %s, 'outbound', %s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp(), clock_timestamp())
         on conflict (clinic_id, idempotency_key) do nothing
         returning id, delivery_status
         """,
@@ -418,6 +420,7 @@ async def insert_outbound(  # noqa: PLR0913 - one value per column
             billing_category,
             delivery_status,
             idempotency_key,
+            prompt_version,
         ),
     )
     row = await cursor.fetchone()

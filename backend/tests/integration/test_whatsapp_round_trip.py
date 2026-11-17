@@ -16,7 +16,6 @@ import pytest
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
-from app.bot.echo import PREFIX as ECHO
 from app.bot.transcription import FakeTranscription, TranscriptionUnavailableError
 from app.core.config import Settings
 from app.db import conversations
@@ -27,11 +26,13 @@ from app.jobs.queue import ConversationJob, QueuedJob
 from app.jobs.timing import MAX_ATTEMPTS
 from app.jobs.worker import run_job
 from tests.conftest import CLINIC_A, PHONE_NUMBER_ID_A, make_settings
+from tests.support.fake_model import EchoModel
 from tests.support.meta_fixtures import meta_payload
 from tests.support.whatsapp_world import (
     VOICE_NOTE,
     FakeMeta,
     MemoryStore,
+    consenting_patient,
     deliver,
     make_context,
     queued_count,
@@ -60,13 +61,17 @@ async def db(database_url: str) -> AsyncIterator[Database]:
 
 
 @pytest.fixture
-def phone() -> str:
-    return random_phone()
+async def phone(db: Database) -> str:
+    """A patient's number; the patient already accepted the privacy notice, so turns reach the
+    bot (the consent gate has its own tests)."""
+    number = random_phone()
+    await consenting_patient(db, number)
+    return number
 
 
 @pytest.fixture
 def settings(phone: str) -> Settings:
-    return make_settings(echo_bot_enabled=True, whatsapp_allowed_test_numbers=(phone,))
+    return make_settings(whatsapp_allowed_test_numbers=(phone,))
 
 
 @pytest.fixture
@@ -76,7 +81,7 @@ def meta() -> FakeMeta:
 
 @pytest.fixture
 def ctx(settings: Settings, db: Database, meta: FakeMeta) -> WorkerContext:
-    return make_context(settings, db, meta)
+    return make_context(settings, db, meta, model=EchoModel())
 
 
 def meta_now(name: str, **overrides: Any) -> dict[str, Any]:
@@ -188,7 +193,7 @@ async def test_a_text_message_goes_round_trip(
 
     await take_turns(ctx, conversation_id)
 
-    assert meta.texts() == [f"{ECHO} Recibí: Does it come in another color?"]
+    assert meta.texts() == ["Recibí: Does it come in another color?"]
     sent = meta.sent[0]
     assert sent["to"] == phone.removeprefix("+")
     assert sent["text"]["preview_url"] is False
@@ -196,7 +201,7 @@ async def test_a_text_message_goes_round_trip(
     assert reply[:4] == (
         "bot",
         "text",
-        f"{ECHO} Recibí: Does it come in another color?",
+        "Recibí: Does it come in another color?",
         "sent",
     )
     assert reply[4].startswith("wamid.OUT.")
@@ -277,7 +282,7 @@ async def test_messages_arriving_out_of_order_are_answered_in_the_order_they_wer
 
     await take_turns(ctx, await conversation_of(db, phone))
 
-    assert meta.texts() == [f"{ECHO} Recibí 2 mensajes: primero / segundo"]
+    assert meta.texts() == ["Recibí 2 mensajes: primero / segundo"]
 
 
 async def test_delivery_statuses_never_go_back(
@@ -374,15 +379,13 @@ async def test_a_burst_of_five_messages_gets_one_answer(
     assert await queued_count(db, match) >= 1
 
     await take_turns(ctx, conversation_id)
-    assert meta.texts() == [
-        f"{ECHO} Recibí 5 mensajes: mensaje 1 / mensaje 2 / mensaje 3 / mensaje 4 / mensaje 5"
-    ]
+    assert meta.texts() == ["Recibí 5 mensajes: mensaje 1 / mensaje 2 / mensaje 3 / mensaje 4 / mensaje 5"]
 
 
 async def test_two_workers_on_one_conversation_answer_once(
     settings: Settings, db: Database, meta: FakeMeta, phone: str
 ) -> None:
-    workers = [make_context(settings, db, meta) for _ in range(5)]
+    workers = [make_context(settings, db, meta, model=EchoModel()) for _ in range(5)]
     await run_events(workers[0], await deliver(db, text_from(phone)))
     conversation_id = await conversation_of(db, phone)
     await patient_pauses(db, conversation_id)
@@ -520,7 +523,7 @@ async def test_a_voice_note_is_stored_privately_transcribed_and_answered(
 ) -> None:
     store = MemoryStore()
     transcriber = FakeTranscription("Hola, quiero una cita para limpieza")
-    ctx = make_context(settings, db, meta, store=store, transcriber=transcriber)
+    ctx = make_context(settings, db, meta, store=store, transcriber=transcriber, model=EchoModel())
     media_id = str(uuid4().int)[:16]
     meta.media[media_id] = (VOICE_NOTE, "audio/ogg; codecs=opus")
     payload = meta_now(
@@ -543,7 +546,7 @@ async def test_a_voice_note_is_stored_privately_transcribed_and_answered(
     assert meta_media_id is None
     assert transcription == "Hola, quiero una cita para limpieza"
     assert transcriber.calls == [(len(VOICE_NOTE), "audio/ogg")]
-    assert meta.texts() == [f"{ECHO} Recibí: (nota de voz) Hola, quiero una cita para limpieza"]
+    assert meta.texts() == ["Recibí: (nota de voz) Hola, quiero una cita para limpieza"]
 
 
 async def test_a_transcription_outage_retries_and_the_last_attempt_still_answers(
@@ -551,7 +554,7 @@ async def test_a_transcription_outage_retries_and_the_last_attempt_still_answers
 ) -> None:
     transcriber = FakeTranscription()
     transcriber.failure = TranscriptionUnavailableError("http 503")
-    ctx = make_context(settings, db, meta, transcriber=transcriber)
+    ctx = make_context(settings, db, meta, transcriber=transcriber, model=EchoModel())
     media_id = str(uuid4().int)[:16]
     meta.media[media_id] = (VOICE_NOTE, "audio/ogg; codecs=opus")
     payload = meta_now(
@@ -571,7 +574,7 @@ async def test_a_transcription_outage_retries_and_the_last_attempt_still_answers
         )
     await run_matching(ctx, job_match)
 
-    assert meta.texts() == [f"{ECHO} Recibí: (nota de voz sin transcribir)"]
+    assert meta.texts() == ["Recibí: (nota de voz sin transcribir)"]
 
 
 async def test_media_from_a_host_that_is_not_meta_is_never_fetched(
@@ -596,7 +599,7 @@ async def test_media_from_a_host_that_is_not_meta_is_never_fetched(
         (conversation_id,),
     )
     assert (media_path, meta_media_id) == (None, None)  # given up, never retried
-    assert meta.texts() == [f"{ECHO} Recibí: (nota de voz sin transcribir)"]
+    assert meta.texts() == ["Recibí: (nota de voz sin transcribir)"]
 
 
 # Coexistence and the window ---------------------------------------------------------------------------
@@ -661,7 +664,8 @@ async def test_a_free_message_is_not_sent_once_the_window_closed(
     assert (await outbound_of(db, conversation_id))[0][3:7:3] == ("failed", 131047)
 
 
-async def test_a_group_message_is_not_a_patient_chat(ctx: WorkerContext, db: Database, phone: str) -> None:
+async def test_a_group_message_is_not_a_patient_chat(ctx: WorkerContext, db: Database) -> None:
+    phone = random_phone()
     payload = text_from(phone)
     payload["entry"][0]["changes"][0]["value"]["messages"][0]["group_id"] = "120363000000000000"
     await run_events(ctx, await deliver(db, payload))
@@ -741,14 +745,14 @@ async def test_a_message_that_arrives_mid_turn_is_answered_after_it(
 
     await turns._release(ctx, holder)  # the holder lets go and sees the message waiting
     await run_matching(ctx, match)
-    assert meta.texts() == [f"{ECHO} Recibí: Does it come in another color?"]
+    assert meta.texts() == ["Recibí: Does it come in another color?"]
 
 
 async def test_a_flood_of_voice_notes_only_transcribes_the_first_ones(
     settings: Settings, db: Database, meta: FakeMeta, phone: str
 ) -> None:
     transcriber = FakeTranscription("hola")
-    ctx = make_context(settings, db, meta, transcriber=transcriber)
+    ctx = make_context(settings, db, meta, transcriber=transcriber, model=EchoModel())
     for _ in range(turns.MAX_TRANSCRIPTIONS_PER_TURN + 2):
         media_id = str(uuid4().int)[:16]
         meta.media[media_id] = (VOICE_NOTE, "audio/ogg; codecs=opus")
@@ -765,7 +769,7 @@ async def test_voice_notes_spread_over_the_day_stop_being_transcribed_at_the_dai
 ) -> None:
     monkeypatch.setattr(turns, "MAX_TRANSCRIPTIONS_PER_DAY", 3)
     transcriber = FakeTranscription("hola")
-    ctx = make_context(settings, db, meta, transcriber=transcriber)
+    ctx = make_context(settings, db, meta, transcriber=transcriber, model=EchoModel())
     for _ in range(2):  # two bursts, each one under the cap per turn
         for _ in range(2):
             media_id = str(uuid4().int)[:16]
@@ -782,7 +786,7 @@ async def test_a_very_long_audio_is_stored_but_not_transcribed(
 ) -> None:
     store = MemoryStore()
     transcriber = FakeTranscription("hola")
-    ctx = make_context(settings, db, meta, store=store, transcriber=transcriber)
+    ctx = make_context(settings, db, meta, store=store, transcriber=transcriber, model=EchoModel())
     media_id = str(uuid4().int)[:16]
     meta.media[media_id] = (VOICE_NOTE + b"\x00" * (2 * 1024 * 1024), "audio/ogg; codecs=opus")
     await run_events(ctx, await deliver(db, audio_from(phone, media_id)))
@@ -791,7 +795,7 @@ async def test_a_very_long_audio_is_stored_but_not_transcribed(
 
     assert transcriber.calls == []
     assert len(store.files) == 1
-    assert meta.texts() == [f"{ECHO} Recibí: (nota de voz sin transcribir)"]
+    assert meta.texts() == ["Recibí: (nota de voz sin transcribir)"]
 
 
 async def test_a_worker_that_dies_holding_the_lease_does_not_strand_the_patient(

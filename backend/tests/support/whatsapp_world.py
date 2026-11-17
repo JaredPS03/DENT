@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 import httpx
 from psycopg.types.json import Jsonb
 
+from app.bot.model import BotModel
 from app.bot.transcription import FakeTranscription
 from app.core.config import Settings
 from app.db.connection import Database
@@ -25,6 +26,7 @@ from app.webhooks.whatsapp import _route_and_store
 from app.whatsapp.client import WhatsAppClient
 from app.whatsapp.media import MetaMediaDownloader
 from app.whatsapp.payloads import WebhookItem, split_payload
+from tests.conftest import CLINIC_A
 
 MEDIA_HOST = "https://lookaside.fbsbx.com/whatsapp_business/attachments/"
 VOICE_NOTE = b"OggS\x00fake-opus-voice-note"
@@ -91,6 +93,10 @@ class MemoryStore:
         check_clinic_path(clinic_id, path)
         return self.files[path][0]
 
+    async def delete(self, clinic_id: UUID, path: str) -> None:
+        check_clinic_path(clinic_id, path)
+        self.files.pop(path, None)
+
 
 def make_context(
     settings: Settings,
@@ -99,6 +105,7 @@ def make_context(
     *,
     store: MemoryStore | None = None,
     transcriber: FakeTranscription | None = None,
+    model: BotModel | None = None,
 ) -> WorkerContext:
     http = httpx.AsyncClient(transport=httpx.MockTransport(meta.handler))
     return WorkerContext(
@@ -108,7 +115,29 @@ def make_context(
         media_source=MetaMediaDownloader(settings, http),
         media_store=store if store is not None else MemoryStore(),
         transcriber=transcriber,
+        model=model,
     )
+
+
+async def consenting_patient(db: Database, phone: str, clinic_id: UUID = CLINIC_A) -> UUID:
+    """A patient who already accepted the clinic's current privacy notice."""
+    async with db.clinic_transaction(clinic_id) as conn:
+        cursor = await conn.execute(
+            """
+            with patient as (
+              insert into public.patients (clinic_id, phone) values (%s, %s) returning id
+            )
+            insert into public.consents (clinic_id, patient_id, notice_version, accepted_at)
+            select %s, patient.id, c.privacy_notice_version, now()
+            from patient, public.clinics c
+            returning patient_id
+            """,
+            (clinic_id, phone, clinic_id),
+        )
+        row = await cursor.fetchone()
+    assert row is not None
+    patient_id: UUID = row[0]
+    return patient_id
 
 
 async def deliver(db: Database, payload: dict[str, Any]) -> list[UUID]:

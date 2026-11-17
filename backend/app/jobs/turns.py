@@ -13,20 +13,18 @@ import logging
 import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from datetime import datetime
 from uuid import UUID, uuid4
 
 from psycopg import AsyncConnection
 
-from app.bot.echo import echo_reply
+from app.bot.orchestrator import take_turn
 from app.bot.transcription import TranscriptionFailedError, TranscriptionUnavailableError
 from app.core.config import Settings
 from app.db import conversations as db
 from app.db.media_store import MediaStoreError, media_path
-from app.jobs.context import WorkerContext
+from app.jobs.context import LeaseLostError, WorkerContext
 from app.jobs.queue import ConversationJob, ExpireHoldJob, enqueue, turn_scheduled_from
 from app.jobs.timing import burst_ready
-from app.whatsapp import outbound
 from app.whatsapp.client import (
     RECIPIENT_NOT_ALLOWED_CODE,
     NotSentError,
@@ -60,10 +58,6 @@ MAX_TRANSCRIPTIONS_PER_DAY = 20
 MAX_TRANSCRIBED_BYTES = 2 * 1024 * 1024
 
 KeepAlive = Callable[[], Awaitable[None]]
-
-
-class LeaseLostError(Exception):
-    """The lease expired and another worker may have taken over: stop and retry later."""
 
 
 class RetryLaterError(Exception):
@@ -186,47 +180,15 @@ async def _answer(ctx: WorkerContext, lease: _Lease, renew: KeepAlive, *, final_
         prepared.append(ready)
     batch = prepared
 
-    async with ctx.db.clinic_transaction(lease.clinic_id) as conn:
-        if not await db.holds_lease(conn, lease.conversation_id, lease.token):
-            raise LeaseLostError
-        conversation = await db.conversation_for_update(conn, lease.conversation_id)
-        bot = await db.bot_settings(conn)
-        reply: str | None = None
-        if conversation is not None and _bot_answers(ctx.settings, conversation, bot, now=now):
-            reply = echo_reply(batch)
-            await db.insert_outbound(
-                conn,
-                clinic_id=lease.clinic_id,
-                conversation_id=lease.conversation_id,
-                sender="bot",
-                message_type="text",
-                content=reply,
-                send_payload=outbound.text(reply),
-                billing_category="service",
-                delivery_status="pending",
-                # One answer per batch, even if this turn is retried.
-                idempotency_key=f"reply:{max(batch, key=lambda message: message.created_at).id}",
-            )
-        await db.mark_handled(conn, [message.id for message in batch])
-    logger.info(
-        "jobs.turn_done",
-        extra={
-            "conversation_id": str(lease.conversation_id),
-            "messages": len(batch),
-            "answered": reply is not None,
-        },
-    )
-    return reply is not None
-
-
-def _bot_answers(
-    settings: Settings, conversation: db.Conversation, bot: db.BotSettings, *, now: datetime
-) -> bool:
-    """Bot rule 3: off for the clinic, paused in this chat or taken by a person, the message only
-    reaches the inbox. Until milestone 1C the only bot is the echo of milestone 1B."""
-    paused = conversation.bot_paused_until is not None and conversation.bot_paused_until > now
-    return (
-        settings.echo_bot_enabled and bot.clinic_bot_enabled and conversation.status == "bot" and not paused
+    return await take_turn(
+        ctx,
+        clinic_id=lease.clinic_id,
+        conversation_id=lease.conversation_id,
+        lease_token=lease.token,
+        batch=batch,
+        now=now,
+        renew=renew,
+        final_attempt=final_attempt,
     )
 
 

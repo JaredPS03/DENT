@@ -78,9 +78,15 @@ class Settings(BaseSettings):
     # the one `pnpm db:start` prints (http://127.0.0.1:54321).
     supabase_url: str = Field(min_length=1)
 
-    # Temporary echo bot of milestone 1B: answers "Prueba de Axon… Recibí: …" to test the round trip
-    # with Meta's test number. Never in production.
-    echo_bot_enabled: bool = False
+    # The AI bot (milestone 1C). Without a key the bot still filters urgencies and asks for consent,
+    # but leaves the rest in the inbox; outside development the worker does not start without one.
+    anthropic_api_key: SecretStr | None = None
+    bot_model: str = Field(default="claude-haiku-5-5", pattern=r"^[a-z0-9][a-z0-9.-]{0,63}$")
+    # Copy of docs/prompt-del-bot.md in app/bot/prompts/v<version>.md; every bot message keeps it.
+    bot_prompt_version: str = Field(default="1.0", pattern=r"^[0-9]{1,3}\.[0-9]{1,3}$")
+    # Axon's own WhatsApp number (phone_number_id), which alerts the clinic's team with the
+    # template alerta_equipo. Without it, escalations only reach the panel.
+    axon_phone_number_id: str | None = Field(default=None, pattern=r"^[0-9]{5,32}$")
 
     # Voice notes to text (OpenAI gpt-transcribe, which does not train on the audio nor keep it;
     # decision 006). Without a key, audios are stored but not transcribed.
@@ -158,6 +164,8 @@ class Settings(BaseSettings):
     @field_validator(
         "sentry_dsn",
         "transcription_api_key",
+        "anthropic_api_key",
+        "axon_phone_number_id",
         "storage_s3_endpoint",
         "storage_s3_access_key_id",
         "storage_s3_secret_access_key",
@@ -166,13 +174,6 @@ class Settings(BaseSettings):
     @classmethod
     def _empty_as_unset(cls, value: object) -> object:
         return None if value == "" else value
-
-    @field_validator("echo_bot_enabled")
-    @classmethod
-    def _no_echo_in_production(cls, value: bool, info: ValidationInfo) -> bool:
-        if value and info.data.get("environment") is Environment.PRODUCTION:
-            raise _problem("the echo bot is for testing; it cannot run in production")
-        return value
 
     @field_validator("storage_s3_endpoint")
     @classmethod

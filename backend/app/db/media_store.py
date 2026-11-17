@@ -37,6 +37,8 @@ class MediaStore(Protocol):
 
     async def get(self, clinic_id: UUID, path: str) -> bytes: ...
 
+    async def delete(self, clinic_id: UUID, path: str) -> None: ...
+
 
 class S3MediaStore:
     def __init__(self, settings: Settings) -> None:
@@ -76,3 +78,11 @@ class S3MediaStore:
         except (BotoCoreError, ClientError) as exc:
             raise MediaStoreError(type(exc).__name__) from None
         return body
+
+    async def delete(self, clinic_id: UUID, path: str) -> None:
+        """Deleting a file that is already gone succeeds, so a retried erasure is harmless."""
+        check_clinic_path(clinic_id, path)
+        try:
+            await asyncio.to_thread(self._client.delete_object, Bucket=BUCKET, Key=path)
+        except (BotoCoreError, ClientError) as exc:
+            raise MediaStoreError(type(exc).__name__) from None

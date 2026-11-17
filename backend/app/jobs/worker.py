@@ -18,6 +18,8 @@ from collections.abc import Awaitable, Callable
 import httpx
 from pydantic import ValidationError
 
+from app.bot.model import ClaudeModel
+from app.bot.prompt import template
 from app.bot.transcription import OpenAITranscription
 from app.core.config import Environment, Settings, SettingsError, load_settings
 from app.core.logs import configure_logging, log_asyncio_exception
@@ -25,9 +27,18 @@ from app.core.observability import init_sentry
 from app.db.connection import Database, create_pool
 from app.db.media_store import S3MediaStore
 from app.jobs import queue
+from app.jobs.bot_jobs import handle_erase_unconsented, handle_team_alert
 from app.jobs.context import WorkerContext
 from app.jobs.ingest import PermanentJobError, handle_event
-from app.jobs.queue import ConversationJob, EventJob, ExpireHoldJob, QueuedJob, parse_job
+from app.jobs.queue import (
+    ConversationJob,
+    EraseUnconsentedJob,
+    EventJob,
+    ExpireHoldJob,
+    QueuedJob,
+    TeamAlertJob,
+    parse_job,
+)
 from app.jobs.timing import MAX_ATTEMPTS, backoff_seconds
 from app.jobs.turns import RetryLaterError, handle_conversation, handle_expire_hold
 from app.whatsapp.client import WhatsAppClient
@@ -68,7 +79,7 @@ async def run_job(ctx: WorkerContext, queued: QueuedJob) -> None:
 
 async def _dispatch(
     ctx: WorkerContext,
-    job: EventJob | ConversationJob | ExpireHoldJob,
+    job: EventJob | ConversationJob | ExpireHoldJob | TeamAlertJob | EraseUnconsentedJob,
     *,
     final_attempt: bool,
     keep_alive: Callable[[], Awaitable[None]],
@@ -77,6 +88,10 @@ async def _dispatch(
         await handle_event(ctx, job)
     elif isinstance(job, ConversationJob):
         await handle_conversation(ctx, job, final_attempt=final_attempt, keep_alive=keep_alive)
+    elif isinstance(job, TeamAlertJob):
+        await handle_team_alert(ctx, job)
+    elif isinstance(job, EraseUnconsentedJob):
+        await handle_erase_unconsented(ctx, job)
     else:
         await handle_expire_hold(ctx, job)
 
@@ -147,6 +162,7 @@ async def main(settings: Settings) -> None:
             media_store=S3MediaStore(settings) if settings.media_storage_configured else None,
             transcriber=OpenAITranscription(settings, http) if settings.transcription_api_key else None,
             jitter=random.random,
+            model=ClaudeModel(settings) if settings.anthropic_api_key else None,
         )
         logger.info(
             "jobs.worker_started",
@@ -154,20 +170,31 @@ async def main(settings: Settings) -> None:
                 "concurrency": settings.worker_concurrency,
                 "media": ctx.media_store is not None,
                 "transcription": ctx.transcriber is not None,
-                "echo_bot": settings.echo_bot_enabled,
+                "bot_model": ctx.model.name if ctx.model else None,
+                "prompt_version": settings.bot_prompt_version,
+                "team_alerts": settings.axon_phone_number_id is not None,
             },
         )
         try:
             await work(ctx, stop)
         finally:
+            if isinstance(ctx.model, ClaudeModel):
+                await ctx.model.close()
             await pool.close()
     logger.info("jobs.worker_stopped")
 
 
 def _check(settings: Settings) -> None:
-    if settings.environment is not Environment.DEVELOPMENT and not settings.media_storage_configured:
+    if settings.environment is Environment.DEVELOPMENT:
+        return
+    if not settings.media_storage_configured:
         # Outside development a voice note must never stay only at Meta, where it expires in 7 days.
         raise SettingsError("Configuración incompleta o inválida: STORAGE_S3_* (falta)")
+    if settings.anthropic_api_key is None:
+        # Outside development a patient must get an answer, not only a place in the inbox.
+        raise SettingsError("Configuración incompleta o inválida: ANTHROPIC_API_KEY (falta)")
+    # The prompt of the configured version has to exist before any patient writes.
+    template(settings.bot_prompt_version)
 
 
 if __name__ == "__main__":

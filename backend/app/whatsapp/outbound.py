@@ -103,7 +103,10 @@ def option_list(body: str, button_label: str, sections: Sequence[Section]) -> di
     }
 
 
-def template(name: str, language: str, body_parameters: Sequence[str] = ()) -> dict[str, Any]:
+def template(
+    name: str, language: str, body_parameters: Sequence[str] = (), *, url_button_suffix: str | None = None
+) -> dict[str, Any]:
+    """`url_button_suffix` fills the end of the template's first link button (its {{1}})."""
     if not name or not name.replace("_", "").isalnum() or not name.isascii() or name != name.lower():
         raise InvalidOutboundError("el nombre de la plantilla no es válido")
     message: dict[str, Any] = {"name": name, "language": {"code": language}}
@@ -118,6 +121,19 @@ def template(name: str, language: str, body_parameters: Sequence[str] = ()) -> d
         message["components"] = [
             {"type": "body", "parameters": [{"type": "text", "text": value} for value in body_parameters]}
         ]
+    if url_button_suffix is not None:
+        if not url_button_suffix or not url_button_suffix.replace("-", "").isalnum():
+            raise InvalidOutboundError(
+                "el final del enlace de la plantilla solo lleva letras, números y guiones"
+            )
+        message.setdefault("components", []).append(
+            {
+                "type": "button",
+                "sub_type": "url",
+                "index": "0",
+                "parameters": [{"type": "text", "text": url_button_suffix}],
+            }
+        )
     return {"type": "template", "template": message}
 
 
@@ -131,11 +147,11 @@ def _row(row: Option) -> dict[str, str]:
 def _check_length(what: str, value: str, limit: int) -> None:
     if not value or not value.strip():
         raise InvalidOutboundError(f"{what} no puede ir vacío")
-    if _length(value) > limit:
+    if length(value) > limit:
         raise InvalidOutboundError(f"{what} pasa de {limit} caracteres")
 
 
-def _length(value: str) -> int:
+def length(value: str) -> int:
     """Length as WhatsApp's clients count it (UTF-16 units): an emoji may count as two."""
     return len(value.encode("utf-16-le")) // 2
 

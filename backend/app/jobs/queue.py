@@ -57,7 +57,25 @@ class ExpireHoldJob(_Job):
     message_id: UUID
 
 
-Job = Annotated[EventJob | ConversationJob | ExpireHoldJob, Field(discriminator="kind")]
+class TeamAlertJob(_Job):
+    """The WhatsApp alerts of an escalation to the clinic's team, from Axon's number."""
+
+    kind: Literal["team_alert"] = "team_alert"
+    escalation_id: UUID
+
+
+class EraseUnconsentedJob(_Job):
+    """While a patient has not accepted the privacy notice, what they wrote more than 24 h ago is
+    erased (text, transcriptions and files); the job comes back for what is newer."""
+
+    kind: Literal["erase_unconsented"] = "erase_unconsented"
+    conversation_id: UUID
+
+
+Job = Annotated[
+    EventJob | ConversationJob | ExpireHoldJob | TeamAlertJob | EraseUnconsentedJob,
+    Field(discriminator="kind"),
+]
 _JOB: TypeAdapter[Job] = TypeAdapter(Job)
 
 
