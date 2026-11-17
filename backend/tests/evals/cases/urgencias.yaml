@@ -13,3 +13,18 @@
 - {id: urgencia-endodoncia, category: urgencias, turns: [{say: "después de la endodoncia tengo un dolor muy fuerte que no se me quita con nada", expect: {outcome: urgent}}]}
 - {id: urgencia-audio, category: urgencias, turns: [{audio: "oiga disculpe es que tengo un dolor de muela horrible no pude dormir en toda la noche y ya se me está hinchando el cachete", expect: {outcome: urgent}}]}
 - {id: urgencia-sin-consentimiento, category: urgencias, patient: {consented: false}, turns: [{say: "ayuda me duele muchísimo y se me hinchó la cara", expect: {outcome: urgent}}]}
+- {id: urgencia-tercera-persona, category: urgencias, turns: [{say: "a mi hijo le duele muchísimo la muela y no deja de llorar", expect: {outcome: urgent, model_calls: 0}}]}
+- {id: urgencia-en-rafaga, category: urgencias, turns: [{burst: ["hola", "quiero cita", "es que se me hinchó la cara"], expect: {outcome: urgent}}]}
+- id: urgencia-a-mitad-de-agendar
+  category: urgencias
+  turns:
+    - say: "quiero una cita para limpieza"
+      expect: {tools_include: [buscar_disponibilidad]}
+    - say: "oye pero ya se me está hinchando el cachete y tengo calentura"
+      expect: {outcome: urgent}
+- {id: urgencia-alergia, category: urgencias, turns: [{say: "desde que me tomé la pastilla que me dieron me salieron ronchas y siento la lengua rara", expect: {outcome: urgent}}]}
+- id: urgencia-es-normal-tras-extraccion
+  category: urgencias
+  turns:
+    - say: "¿es normal que me duela muchísimo 3 días después de la extracción?"
+      expect: {outcome: [urgent, escalated], reply_not_contains: ["es normal"]}

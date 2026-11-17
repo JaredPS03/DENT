@@ -18,6 +18,9 @@ if sys.platform == "win32":
 
 # Local Supabase started with `pnpm db:start`; the password is the local-only one from supabase/seed.sql.
 LOCAL_DATABASE_URL = "postgresql://axon_app:axon_app_local@127.0.0.1:54322/postgres"
+# The local database's owner, for the few tests that change what only Axon's admin tasks change
+# (a team member's phone). The CLI's local default, never a real one.
+LOCAL_ADMIN_DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
 
 TEST_APP_SECRET = "test-app-secret"
 TEST_VERIFY_TOKEN = "test-verify-token"

@@ -19,37 +19,58 @@ class Voice:
 
 
 def urgency(voice: Voice) -> str:
+    """The 911 only for trouble breathing or swallowing (spec); worse pain goes to urgencias."""
     told = _to(voice.doctor or TEAM)
     if voice.formal:
         return (
-            f"Lamento que se sienta así. Ya avisé {told} para que le contacte lo antes posible. "
-            "Si el dolor o la hinchazón aumentan, o le cuesta respirar o tragar, llame al 911 "
-            "o acuda a urgencias."
+            f"Lamento lo que está pasando. Ya avisé {told} para que se comunique con usted lo antes "
+            "posible. Si le cuesta respirar o tragar, llame al 911 ahora. Si el dolor, el sangrado o "
+            "la hinchazón empeoran mientras tanto, acuda a urgencias."
         )
     return (
-        f"Lamento que te sientas así. Ya avisé {told} para que te contacte lo antes posible. "
-        "Si el dolor o la hinchazón aumentan, o te cuesta respirar o tragar, llama al 911 "
-        "o acude a urgencias."
+        f"Lamento lo que estás pasando. Ya avisé {told} para que te contacte lo antes posible. "
+        "Si te cuesta respirar o tragar, llama al 911 ahora. Si el dolor, el sangrado o la "
+        "hinchazón empeoran mientras tanto, acude a urgencias."
     )
 
 
 def fallback(voice: Voice) -> str:
     if voice.formal:
-        return f"Gracias por su mensaje. En un momento le responde el equipo de {voice.clinic_name}."
-    return f"Gracias por tu mensaje. En un momento te responde el equipo de {voice.clinic_name}."
+        return (
+            f"Gracias por su mensaje. Alguien del equipo de {voice.clinic_name} le responderá "
+            "lo antes posible."
+        )
+    return (
+        f"Gracias por tu mensaje. Alguien del equipo de {voice.clinic_name} te responderá lo antes posible."
+    )
+
+
+def voice_note_unheard(voice: Voice) -> str:
+    """A voice note nobody could transcribe: a person listens to it (it might be an urgency)."""
+    if voice.formal:
+        return (
+            "Recibí su nota de voz, pero no pude escucharla bien. Alguien del equipo de "
+            f"{voice.clinic_name} la escuchará y le responderá lo antes posible."
+        )
+    return (
+        "Recibí tu nota de voz, pero no pude escucharla bien. Alguien del equipo de "
+        f"{voice.clinic_name} la escuchará y te responderá lo antes posible."
+    )
 
 
 def consent_notice(voice: Voice, notice_url: str) -> str:
+    """The purposes are spelled out (LFPDPPP: consent for sensitive data is for concrete purposes);
+    they must match the clinic's full notice. The link goes on its own line."""
     if voice.formal:
         return (
-            f"Hola, soy el asistente virtual de {voice.clinic_name}. Para ayudarle necesitamos su "
-            "autorización para tratar sus datos, incluidos datos de salud, según nuestro aviso de "
-            f"privacidad: {notice_url}. ¿Acepta?"
+            f"Hola, soy el asistente virtual de {voice.clinic_name}. Para agendar y recordarle sus "
+            "citas y atender sus dudas, necesitamos su permiso para usar sus datos, incluidos datos "
+            f"de salud. Aquí está nuestro aviso de privacidad:\n{notice_url}\n\n¿Acepta?"
         )
     return (
-        f"Hola, soy el asistente virtual de {voice.clinic_name}. Para ayudarte necesitamos tu "
-        "autorización para tratar tus datos, incluidos datos de salud, según nuestro aviso de "
-        f"privacidad: {notice_url}. ¿Aceptas?"
+        f"Hola, soy el asistente virtual de {voice.clinic_name}. Para agendar y recordarte tus "
+        "citas y atender tus dudas, necesitamos tu permiso para usar tus datos, incluidos datos "
+        f"de salud. Aquí está nuestro aviso de privacidad:\n{notice_url}\n\n¿Aceptas?"
     )
 
 
@@ -57,12 +78,12 @@ def consent_reminder(voice: Voice, notice_url: str) -> str:
     """Goes under the AI's general answer while the patient has not accepted."""
     if voice.formal:
         return (
-            "Para agendar o darle seguimiento necesitamos su autorización para tratar sus datos, "
-            f"incluidos datos de salud, según nuestro aviso de privacidad: {notice_url}. ¿Acepta?"
+            "Para agendar o darle seguimiento necesitamos su permiso para usar sus datos, incluidos "
+            f"datos de salud. Aviso de privacidad:\n{notice_url}\n\n¿Acepta?"
         )
     return (
-        "Para agendar o darte seguimiento necesitamos tu autorización para tratar tus datos, "
-        f"incluidos datos de salud, según nuestro aviso de privacidad: {notice_url}. ¿Aceptas?"
+        "Para agendar o darte seguimiento necesitamos tu permiso para usar tus datos, incluidos "
+        f"datos de salud. Aviso de privacidad:\n{notice_url}\n\n¿Aceptas?"
     )
 
 

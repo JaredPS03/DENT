@@ -24,10 +24,9 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.bot.prompt import clinic_block, opening_hours, spoken_moment
-from app.bot.reply import OfferedSlot, Reply, ReplyRejectedError, build_reply
+from app.bot.reply import ConsentRequest, OfferedSlot, Reply, ReplyRejectedError, build_reply
 from app.bot.urgency import normalize
 from app.db import bot as data
-from app.db import conversations
 from app.db.connection import Database
 from app.jobs.queue import TeamAlertJob, enqueue
 from app.scheduling.availability import Slot, WeeklyHours
@@ -48,6 +47,10 @@ MAX_SLOTS = 10
 MAX_REASON = 200
 MAX_SUMMARY = 600
 MAX_NAME = 120
+UNCONSENTED_SUMMARY = (
+    "El paciente no ha aceptado el aviso de privacidad, así que no se guardan detalles. "
+    "Revisa la conversación en la bandeja."
+)
 NO_CONSENT = (
     "El paciente no ha aceptado el aviso de privacidad: no puedes usar esta función. "
     "Responde solo dudas generales del consultorio; el sistema agrega el aviso a tu mensaje."
@@ -116,7 +119,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     ),
     _tool(
         "cancelar_cita",
-        "Cancela una cita próxima del paciente cuando él lo pide. Recuérdale la política de "
+        "Cancela una cita próxima del paciente cuando lo pide. Recuérdale la política de "
         "cancelación del consultorio si aplica.",
         {
             "cita": {"type": "string", "format": "uuid", "description": "Id de la cita, de <paciente>."},
@@ -155,7 +158,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "prioridad": {"type": "string", "enum": ["urgente", "normal"]},
             "resumen": {
                 **_TEXT,
-                "description": "Tres líneas: quién es, qué quiere y qué se intentó.",
+                "description": "Tres líneas: quién es, qué quiere y qué se intentó. Si el paciente no "
+                "ha aceptado el aviso de privacidad, sin síntomas ni datos de salud.",
             },
         },
     ),
@@ -193,13 +197,15 @@ class TurnState:
     hours: list[WeeklyHours]
     profile: data.PatientProfile
     upcoming: list[data.UpcomingAppointment]
-    # Slots offered in this conversation recently, by key; offered_at tells this turn's apart.
+    # Slots offered in this conversation recently, by key; shown_at tells which the patient saw.
     offered: dict[str, data.StoredSlot]
     turn_started_at: datetime
+    # "turn:<id of the batch's last message>": a retried turn finds its own escalations.
+    turn_key: str
     escalation: Escalation | None = None
     reply: Reply | None = None
     allowed_link_hosts: frozenset[str] = field(default_factory=frozenset)
-    consent_request: str | None = None  # set while the patient has not accepted the notice
+    consent_request: ConsentRequest | None = None  # set while the patient has not accepted
 
     @property
     def tz(self) -> ZoneInfo:
@@ -277,10 +283,7 @@ class Tools:
             )
         except SlotUnavailableError as taken:
             await self._remember(service, taken.alternatives)
-            raise ToolError(
-                "Ese horario se acaba de ocupar. Ofrece estas alternativas con responder: "
-                + json.dumps([self._slot_out(s) for s in taken.alternatives], ensure_ascii=False)
-            ) from None
+            raise ToolError(self._taken(taken.alternatives)) from None
         except PatientBusyError:
             raise ToolError("El paciente ya tiene una cita a esa hora: revisa sus citas próximas.") from None
         except AgendaError as error:
@@ -301,10 +304,7 @@ class Tools:
             )
         except SlotUnavailableError as taken:
             await self._remember_for(current.service_id, taken.alternatives)
-            raise ToolError(
-                "Ese horario se acaba de ocupar. Ofrece estas alternativas con responder: "
-                + json.dumps([self._slot_out(s) for s in taken.alternatives], ensure_ascii=False)
-            ) from None
+            raise ToolError(self._taken(taken.alternatives)) from None
         except AgendaError as error:
             raise ToolError(str(error)) from None
         self.state.upcoming = [
@@ -371,14 +371,24 @@ class Tools:
     async def escalar_a_humano(self, arguments: dict[str, Any]) -> dict[str, Any]:
         request = _parse(_Escalate, arguments)
         priority: Literal["urgent", "normal"] = "urgent" if request.prioridad == "urgente" else "normal"
-        if self.state.escalation is None:
+        current = self.state.escalation
+        # One per turn; an urgency found after a normal escalation still opens its own.
+        if current is None or (current.priority == "normal" and priority == "urgent"):
+            if self.state.profile.consented:
+                reason = _clip(request.motivo, MAX_REASON) or "Pedido por el asistente"
+                summary = _clip(request.resumen, MAX_SUMMARY) or "Sin resumen."
+            else:
+                # Without consent nothing the AI wrote about the patient is kept (no symptoms).
+                reason = "Pedido por el asistente"
+                summary = UNCONSENTED_SUMMARY
             self.state.escalation = await escalate(
                 self._db,
                 clinic_id=self.state.clinic_id,
                 conversation_id=self.state.conversation_id,
-                reason=_clip(request.motivo, MAX_REASON) or "Pedido por el asistente",
+                reason=reason,
                 priority=priority,
-                summary=_clip(request.resumen, MAX_SUMMARY) or "Sin resumen.",
+                summary=summary,
+                turn_key=self.state.turn_key,
             )
         if priority == "urgent":
             return {"escalado": True}
@@ -435,12 +445,12 @@ class Tools:
             for slot in self.state.offered.values()
             if slot.service_id == service_id and slot.starts_at == starts_at
         ]
-        if any(slot.offered_at < self.state.turn_started_at for slot in matches):
-            return next(slot for slot in matches if slot.offered_at < self.state.turn_started_at)
+        seen = [s for s in matches if s.shown_at is not None and s.shown_at < self.state.turn_started_at]
+        if seen:
+            return seen[0]
         if matches:
             raise ToolError(
-                "Ese horario lo acabas de ofrecer en este turno: ofrécelo con responder y espera a que "
-                "el paciente lo elija."
+                "El paciente todavía no ha visto ese horario: ofrécelo con responder y espera a que lo elija."
             )
         raise ToolError(
             "Ese horario no lo ofreciste antes en esta conversación para ese servicio. Busca con "
@@ -468,6 +478,16 @@ class Tools:
                 s.id, service_id, name, s.provider_id, s.starts_at, s.label, offered_at
             )
 
+    def _taken(self, alternatives: Sequence[Slot]) -> str:
+        if not alternatives:
+            return (
+                "Ese horario se acaba de ocupar y no hay alternativas cercanas: discúlpate y ofrece "
+                "buscar otra fecha o pasar con el equipo."
+            )
+        return "Ese horario se acaba de ocupar. Ofrece estas alternativas con responder: " + json.dumps(
+            [self._slot_out(s) for s in alternatives], ensure_ascii=False
+        )
+
     def _slot_out(self, slot: Slot) -> dict[str, str]:
         return {
             "id": slot.id,
@@ -476,7 +496,8 @@ class Tools:
         }
 
     def _spoken(self, moment: datetime) -> str:
-        return spoken_moment(moment.astimezone(self.state.tz))
+        local = moment.astimezone(self.state.tz)
+        return spoken_moment(local, this_year=self.state.turn_started_at.astimezone(self.state.tz).year)
 
 
 async def escalate(  # noqa: PLR0913 - one value per column
@@ -487,30 +508,34 @@ async def escalate(  # noqa: PLR0913 - one value per column
     reason: str,
     priority: Literal["urgent", "normal"],
     summary: str,
+    turn_key: str,
 ) -> Escalation:
-    """Opens the escalation, hands the chat to a person and queues the alert to the team, in one
-    transaction: the alert job is queued only if the escalation exists, and vice versa."""
+    """Opens the escalation and queues the alert to the team in one transaction. `turn_key` makes
+    it once per turn and priority: a retried turn finds it and alerts nobody again. The chat
+    passes to a person when the turn ends, with the reply (orchestrator._finish), so a turn that
+    fails after escalating is retried instead of leaving the patient without an answer."""
     async with db.clinic_transaction(clinic_id) as conn:
-        escalation_id = await data.insert_escalation(
+        opened = await data.insert_escalation(
             conn,
             clinic_id=clinic_id,
             conversation_id=conversation_id,
             reason=reason,
             priority=priority,
             summary=summary,
+            turn_key=f"{turn_key}:{priority}",
         )
-        await conversations.set_status(conn, conversation_id, "human")
-        if await data.queue_team_alerts(conn, clinic_id, escalation_id):
-            await enqueue(conn, TeamAlertJob(clinic_id=clinic_id, escalation_id=escalation_id))
+        if opened.created and await data.queue_team_alerts(conn, clinic_id, opened.id):
+            await enqueue(conn, TeamAlertJob(clinic_id=clinic_id, escalation_id=opened.id))
     logger.info(
         "bot.escalated",
         extra={
             "conversation_id": str(conversation_id),
-            "escalation_id": str(escalation_id),
+            "escalation_id": str(opened.id),
             "priority": priority,
+            "again": not opened.created,
         },
     )
-    return Escalation(escalation_id, priority)
+    return Escalation(opened.id, priority)
 
 
 # Arguments ---------------------------------------------------------------------------------------

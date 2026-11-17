@@ -9,11 +9,12 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.bot.reply import (
-    CONSENT_BUTTONS,
     MAX_REPLY_TEXT,
+    ConsentRequest,
     OfferedSlot,
     ReplyRejectedError,
     build_reply,
+    consent_buttons,
     slot_button_id,
 )
 
@@ -63,7 +64,7 @@ def test_up_to_three_slots_become_buttons_with_label_and_exact_start() -> None:
     buttons = message.payload["interactive"]["action"]["buttons"]
     assert [b["reply"]["title"] for b in buttons] == ["Jue 10:00 am", "Jue 4:00 pm"]
     assert [b["reply"]["id"] for b in buttons] == ["2026-11-19T10:00:00-06:00", "2026-11-19T16:00:00-06:00"]
-    assert message.slot_keys == ("aaaa2222", "dddd2222")
+    assert message.slot_keys == (("aaaa2222", CLEANING), ("dddd2222", CLEANING))
 
 
 def test_slots_and_plain_buttons_share_the_three_places_slots_first() -> None:
@@ -102,6 +103,9 @@ def test_a_list_of_plain_options() -> None:
         ({"horarios": ["aaaa2222", "aaaa2222"]}, "repiten"),
         ({"texto": "Pásate a https://descuentos.example/promo"}, "enlace"),
         ({"texto": "Mira www.otro-sitio.example"}, "enlace"),
+        ({"texto": "Paga tu anticipo en bit.ly/pago-sonrisa"}, "enlace"),
+        ({"texto": "Entra a pagos-sonrisa.com/pagar"}, "enlace"),
+        ({"texto": "Escríbenos a citas@otro-correo.mx"}, "enlace"),
     ],
 )
 def test_what_breaks_the_rules_goes_back_to_the_ai_with_the_reason(
@@ -114,6 +118,15 @@ def test_what_breaks_the_rules_goes_back_to_the_ai_with_the_reason(
 def test_links_of_the_clinic_are_allowed() -> None:
     message = reply(texto="Estamos aquí: https://maps.app.goo.gl/abc123")
     assert message.payload["type"] == "text"
+    assert reply(texto="O búscanos como maps.app.goo.gl/abc123").payload["type"] == "text"
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Te esperamos a las 9:00 a.m. con la Dra. Laura.", "Son 1.5 horas aprox.", "Abrimos de 4.30 pm a 7 pm."],
+)
+def test_ordinary_text_with_dots_is_not_taken_for_a_link(text: str) -> None:
+    assert reply(texto=text).payload["type"] == "text"
 
 
 def test_without_consent_the_notice_rides_on_the_same_message() -> None:
@@ -122,14 +135,18 @@ def test_without_consent_the_notice_rides_on_the_same_message() -> None:
         offered=OFFERED,
         tz=TZ,
         allowed_link_hosts=HOSTS,
-        consent_request="Para agendar necesito tu autorización: https://consultorio.example/aviso. ¿Aceptas?",
+        consent_request=ConsentRequest(
+            "Para agendar necesito tu autorización: https://consultorio.example/aviso. ¿Aceptas?", "2026-10"
+        ),
     )
     interactive = message.payload["interactive"]
     assert interactive["body"]["text"] == (
         "Abrimos de lunes a viernes de 9 a 7.\n\n"
         "Para agendar necesito tu autorización: https://consultorio.example/aviso. ¿Aceptas?"
     )
-    assert [b["reply"]["id"] for b in interactive["action"]["buttons"]] == [o.id for o in CONSENT_BUTTONS]
+    assert [b["reply"]["id"] for b in interactive["action"]["buttons"]] == [
+        o.id for o in consent_buttons("2026-10")
+    ]
 
 
 def test_without_consent_the_ai_cannot_offer_slots_or_options() -> None:
@@ -139,7 +156,7 @@ def test_without_consent_the_ai_cannot_offer_slots_or_options() -> None:
             offered=OFFERED,
             tz=TZ,
             allowed_link_hosts=HOSTS,
-            consent_request="¿Aceptas?",
+            consent_request=ConsentRequest("¿Aceptas?", "2026-10"),
         )
 
 

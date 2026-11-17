@@ -23,12 +23,30 @@ from app.whatsapp.outbound import InvalidOutboundError, Option, Section
 
 # The body of a message with buttons takes 1024 characters; bot rule: one short message.
 MAX_REPLY_TEXT = outbound.MAX_BUTTONS_BODY
-CONSENT_ACCEPT_ID = "consent:accept"
+# Acepto carries the notice version: a tap on an older notice never counts for the current one.
+CONSENT_ACCEPT_PREFIX = "consent:accept:"
 CONSENT_DECLINE_ID = "consent:decline"
-CONSENT_BUTTONS = (Option(CONSENT_ACCEPT_ID, "Acepto"), Option(CONSENT_DECLINE_ID, "No acepto"))
 OPTION_ID_PREFIX = "opcion:"
 
 _LINK = re.compile(r"(?i)\b(?:https?://|www\.)[^\s<>\"']+")
+# A bare domain ("bit.ly/pago", "pagos-sonrisa.com"): WhatsApp turns it into a link too.
+_HOST = re.compile(r"(?i)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}\b")
+
+
+def consent_accept_id(version: str) -> str:
+    return CONSENT_ACCEPT_PREFIX + version
+
+
+def consent_buttons(version: str) -> tuple[Option, Option]:
+    return (Option(consent_accept_id(version), "Acepto"), Option(CONSENT_DECLINE_ID, "No acepto"))
+
+
+@dataclass(frozen=True, slots=True)
+class ConsentRequest:
+    """The privacy notice that rides under the AI's answer while the patient has not accepted."""
+
+    text: str
+    version: str
 
 
 class ReplyRejectedError(ValueError):
@@ -48,7 +66,8 @@ class OfferedSlot:
 class Reply:
     content: str  # what the patient reads, stored as the message's content
     payload: dict[str, Any]  # Graph API body, without the recipient
-    slot_keys: tuple[str, ...]
+    # The slots put in front of the patient, by key and service: only these can be booked later.
+    slot_keys: tuple[tuple[str, UUID], ...]
 
 
 class _Responder(BaseModel):
@@ -70,7 +89,7 @@ def build_reply(
     offered: Mapping[str, OfferedSlot],
     tz: ZoneInfo,
     allowed_link_hosts: frozenset[str],
-    consent_request: str | None = None,
+    consent_request: ConsentRequest | None = None,
 ) -> Reply:
     """The message for `responder`'s arguments. With `consent_request` (a patient who has not
     accepted the privacy notice) the AI may only write text: the notice and its buttons go along."""
@@ -93,12 +112,13 @@ def build_reply(
                 "El paciente no ha aceptado el aviso de privacidad: responde solo con texto. "
                 "El sistema agrega el aviso y sus botones."
             )
-        message = f"{body}\n\n{consent_request}"
-        return Reply(message, _checked(lambda: outbound.buttons(message, CONSENT_BUTTONS)), ())
+        message = f"{body}\n\n{consent_request.text}"
+        buttons = consent_buttons(consent_request.version)
+        return Reply(message, _checked(lambda: outbound.buttons(message, buttons)), ())
 
     slots = [_offered(key, offered) for key in answer.horarios]
     slot_options = [Option(slot_button_id(slot, tz), slot.label, _short(slot.service_name)) for slot in slots]
-    keys = tuple(slot.key for slot in slots)
+    keys = tuple((slot.key, slot.service_id) for slot in slots)
 
     if answer.lista:
         if answer.botones:
@@ -153,10 +173,14 @@ def _checked(build: Any) -> dict[str, Any]:
 
 
 def _check_links(body: str, allowed_hosts: frozenset[str]) -> None:
-    for link in _LINK.findall(body):
-        url = link if "://" in link else f"https://{link}"
-        host = (urlsplit(url).hostname or "").lower()
-        if host not in allowed_hosts:
+    hosts = {
+        (urlsplit(link if "://" in link else f"https://{link}").hostname or "")
+        for link in _LINK.findall(body)
+    }
+    hosts |= {match.group(0) for match in _HOST.finditer(body)}
+    for host in hosts:
+        if host.lower() not in allowed_hosts:
             raise ReplyRejectedError(
-                "Ese enlace no es del consultorio: no incluyas enlaces que no estén en <consultorio>."
+                "Ese enlace no es del consultorio: no incluyas enlaces ni dominios que no estén "
+                "en <consultorio>."
             )

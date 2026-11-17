@@ -32,7 +32,7 @@ def test_without_a_doctor_name_the_team_is_told() -> None:
 
 def test_the_fallback_message_promises_the_clinic_team() -> None:
     assert fixed.fallback(INFORMAL) == (
-        "Gracias por tu mensaje. En un momento te responde el equipo de Clínica Dental Sonrisa."
+        "Gracias por tu mensaje. Alguien del equipo de Clínica Dental Sonrisa te responderá lo antes posible."
     )
     assert fixed.fallback(FORMAL).startswith("Gracias por su mensaje.")
 

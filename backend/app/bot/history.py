@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from app.bot.reply import CONSENT_ACCEPT_ID, CONSENT_DECLINE_ID, OfferedSlot, slot_button_id
+from app.bot.reply import CONSENT_ACCEPT_PREFIX, CONSENT_DECLINE_ID, OfferedSlot, slot_button_id
 from app.db.bot import HistoryRow
 
 _LOOK_ALIKES = str.maketrans({"<": "‹", ">": "›"})
@@ -24,10 +24,15 @@ def as_patient_text(text: str, *, transcription: bool) -> str:
 
 
 def build_messages(
-    rows: Sequence[HistoryRow], slots_by_start: Mapping[datetime, OfferedSlot], tz: ZoneInfo
+    rows: Sequence[HistoryRow],
+    slots_by_start: Mapping[datetime, OfferedSlot],
+    tz: ZoneInfo,
+    *,
+    shown: Sequence[OfferedSlot] = (),
 ) -> list[dict[str, Any]]:
     """Messages API turns, oldest first, starting with the patient. Consecutive messages of the
-    same side are joined, as the API would."""
+    same side are joined, as the API would. `shown`: the slots the patient already saw, noted at
+    the end so the AI can take a choice made by words or audio."""
     turns: list[tuple[str, str]] = []
     for row in rows:
         text: str | None
@@ -47,13 +52,20 @@ def build_messages(
         turns.pop(0)
     while turns and turns[-1][0] != "user":  # the model answers the patient, never itself
         turns.pop()
+    if turns and shown:
+        listed = "; ".join(
+            f"«{slot.label}» de {slot.service_name}, inicio exacto: {slot_button_id(slot, tz)}"
+            for slot in shown
+        )
+        role, text = turns[-1]
+        turns[-1] = (role, f"{text}\n(Horarios que ya le mostraste: {listed})")
     return [{"role": role, "content": text} for role, text in turns]
 
 
 def _patient_line(  # noqa: PLR0911 - one line per kind of message
     row: HistoryRow, slots_by_start: Mapping[datetime, OfferedSlot], tz: ZoneInfo
 ) -> str:
-    if row.reply_id == CONSENT_ACCEPT_ID:
+    if row.reply_id and row.reply_id.startswith(CONSENT_ACCEPT_PREFIX):
         return "(Tocó «Acepto» en el aviso de privacidad)"
     if row.reply_id == CONSENT_DECLINE_ID:
         return "(Tocó «No acepto» en el aviso de privacidad)"

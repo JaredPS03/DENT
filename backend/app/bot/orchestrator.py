@@ -31,9 +31,15 @@ from app.bot.costs import estimate_microusd
 from app.bot.fixed import Voice
 from app.bot.history import build_messages
 from app.bot.prompt import PatientContext, system_blocks
-from app.bot.reply import CONSENT_ACCEPT_ID, CONSENT_BUTTONS, CONSENT_DECLINE_ID, OfferedSlot
-from app.bot.tools import Escalation, Tools, TurnState, escalate
-from app.bot.urgency import detect_urgency
+from app.bot.reply import (
+    CONSENT_DECLINE_ID,
+    ConsentRequest,
+    OfferedSlot,
+    consent_accept_id,
+    consent_buttons,
+)
+from app.bot.tools import Tools, TurnState, escalate
+from app.bot.urgency import detect_urgency, is_breathing_signal
 from app.db import bot as data
 from app.db import conversations
 from app.db.conversations import PendingMessage
@@ -52,6 +58,8 @@ CONSENT_WINDOW = timedelta(hours=24)
 # While the team has an open urgent escalation for the chat, more urgent messages do not alert
 # again: the person who answers already sees them.
 URGENT_REPEAT_WINDOW = timedelta(hours=2)
+# The slots already shown that the AI sees, so the patient can choose one by words or audio.
+MAX_SHOWN_SLOTS = 10
 
 KeepAlive = Callable[[], Awaitable[None]]
 Outcome = Literal["replied", "escalated", "urgent", "consent_notice", "fallback"]
@@ -61,7 +69,9 @@ Outcome = Literal["replied", "escalated", "urgent", "consent_notice", "fallback"
 class BotReply:
     content: str
     payload: dict[str, Any]
-    prompt_version: str | None
+    prompt_version: str | None = None
+    # Slots (key, service) the reply shows: from the next turn on, the patient may choose them.
+    slot_keys: tuple[tuple[str, UUID], ...] = ()
 
 
 async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913 - the steps of one turn, each with its own exit
@@ -78,6 +88,7 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913 - the steps of one turn,
     """Takes care of the patient's batch. True if a reply was queued. On the job's last attempt a
     failure inside the AI step ends in the fallback message instead of another retry."""
     started = time.monotonic()
+    turn_key = f"turn:{max(batch, key=lambda message: message.created_at).id}"
     async with ctx.db.clinic_transaction(clinic_id) as conn:
         conversation = await conversations.conversation_for_update(conn, conversation_id)
         if conversation is None:
@@ -91,7 +102,11 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913 - the steps of one turn,
     bot_on = clinic.bot_enabled and conversation.status == "bot" and not paused
 
     async def finish(
-        reply: BotReply | None, outcome: Outcome | None, result: AgentResult | None = None
+        reply: BotReply | None,
+        outcome: Outcome | None,
+        result: AgentResult | None = None,
+        *,
+        hand_over: bool = False,
     ) -> bool:
         return await _finish(
             ctx,
@@ -102,39 +117,43 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913 - the steps of one turn,
             reply=reply,
             outcome=outcome,
             result=result,
+            hand_over=hand_over,
             latency_ms=round((time.monotonic() - started) * 1000),
         )
 
     if not bot_on:
+        alerted = False
         if signal is not None:
-            await _alert_only(
+            alerted = await _alert_only(
                 ctx,
                 clinic_id=clinic_id,
                 conversation_id=conversation_id,
                 signal=signal,
                 name=profile.name,
                 now=now,
+                turn_key=turn_key,
             )
-        return await finish(None, None)
+        return await finish(None, None, hand_over=alerted)
 
     if signal is not None:
-        # A retried turn finds the escalation it already opened and does not alert twice.
-        await _alert_only(
-            ctx,
+        # Once per turn: a retried turn finds this escalation and does not alert twice.
+        await escalate(
+            ctx.db,
             clinic_id=clinic_id,
             conversation_id=conversation_id,
-            signal=signal,
-            name=profile.name,
-            now=now,
+            reason=signal,
+            priority="urgent",
+            summary=_urgent_summary(profile.name, signal, answered=True),
+            turn_key=turn_key,
         )
-        return await finish(_fixed(fixed.urgency(voice)), "urgent")
+        return await finish(_fixed(fixed.urgency(voice)), "urgent", hand_over=True)
 
     if not clinic.notice_url or not clinic.notice_version:
         # Without a privacy notice the bot cannot ask for consent: the message stays in the inbox.
         logger.error("bot.privacy_notice_missing", extra={"conversation_id": str(conversation_id)})
         return await finish(None, None)
 
-    consent_request: str | None = None
+    consent_request: ConsentRequest | None = None
     if not profile.consented:
         gate = await _consent_gate(
             ctx,
@@ -150,21 +169,36 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913 - the steps of one turn,
             return await finish(gate, "consent_notice")
         profile, consent_request = gate
 
+    if _unheard_voice_note(batch):
+        # Nobody could read it, and it might be an urgency: a person listens to it.
+        await escalate(
+            ctx.db,
+            clinic_id=clinic_id,
+            conversation_id=conversation_id,
+            reason="nota de voz sin transcribir",
+            priority="normal",
+            summary=_unheard_summary(profile.name),
+            turn_key=turn_key,
+        )
+        return await finish(_fixed(fixed.voice_note_unheard(voice)), "escalated", hand_over=True)
+
     if ctx.model is None:
         logger.warning("bot.model_not_configured", extra={"conversation_id": str(conversation_id)})
         return await finish(None, None)
 
-    state, system, messages = await _prepare(
-        ctx,
-        clinic_id=clinic_id,
-        conversation_id=conversation_id,
-        patient_id=conversation.patient_id,
-        clinic=clinic,
-        profile=profile,
-        now=now,
-        consent_request=consent_request,
-    )
+    state: TurnState | None = None
     try:
+        state, system, messages = await _prepare(
+            ctx,
+            clinic_id=clinic_id,
+            conversation_id=conversation_id,
+            patient_id=conversation.patient_id,
+            clinic=clinic,
+            profile=profile,
+            now=now,
+            consent_request=consent_request,
+            turn_key=turn_key,
+        )
         result = await run_agent(
             ctx.model,
             Tools(ctx.db, ctx.agenda_connector(), state, ctx.clock),
@@ -182,21 +216,23 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913 - the steps of one turn,
         logger.error("bot.turn_crashed", extra={"error": type(error).__name__})  # noqa: TRY400
         result = AgentResult(outcome="fallback", error_kind="internal_error")
     version = ctx.settings.bot_prompt_version
+    escalated = state is not None and state.escalation is not None
     if result.outcome == "urgent":
-        return await finish(_fixed(fixed.urgency(voice)), "urgent", result)
-    if result.outcome in {"replied", "escalated"} and state.reply is not None:
-        reply = BotReply(state.reply.content, state.reply.payload, version)
-        return await finish(reply, result.outcome, result)
-    if state.escalation is None:
-        state.escalation = await escalate(
+        return await finish(_fixed(fixed.urgency(voice)), "urgent", result, hand_over=True)
+    if state is not None and result.outcome in {"replied", "escalated"} and state.reply is not None:
+        reply = BotReply(state.reply.content, state.reply.payload, version, state.reply.slot_keys)
+        return await finish(reply, result.outcome, result, hand_over=escalated)
+    if not escalated:
+        await escalate(
             ctx.db,
             clinic_id=clinic_id,
             conversation_id=conversation_id,
             reason="el asistente no pudo contestar",
             priority="normal",
-            summary=_fallback_summary(state.profile.name, result.error_kind),
+            summary=_fallback_summary(profile.name),
+            turn_key=turn_key,
         )
-    return await finish(_fixed(fixed.fallback(voice)), "fallback", result)
+    return await finish(_fixed(fixed.fallback(voice)), "fallback", result, hand_over=True)
 
 
 async def _consent_gate(  # noqa: PLR0913 - what the gate looks at
@@ -209,14 +245,14 @@ async def _consent_gate(  # noqa: PLR0913 - what the gate looks at
     batch: Sequence[PendingMessage],
     requested_at: datetime | None,
     now: datetime,
-) -> BotReply | tuple[data.PatientProfile, str | None]:
+) -> BotReply | tuple[data.PatientProfile, ConsentRequest | None]:
     """For a patient who has not accepted the notice: the message to send instead of the AI, or
-    the profile to go on with and, while they have not accepted, the reminder for the AI's answer."""
+    the profile to go on with and, while they have not accepted, the notice for the AI's answer."""
     assert clinic.notice_url is not None  # noqa: S101 - checked by the caller
     assert clinic.notice_version is not None  # noqa: S101
     voice = Voice(clinic.name, clinic.doctor, clinic.formal)
-    tap = _consent_tap(batch)
-    if tap is not None and tap[0] == CONSENT_ACCEPT_ID:
+    tap = _consent_tap(batch, clinic.notice_version)
+    if tap is not None and tap[0] == consent_accept_id(clinic.notice_version):
         async with ctx.db.clinic_transaction(clinic.id) as conn:
             await data.accept_consent(conn, clinic.id, patient_id, clinic.notice_version, tap[1])
         return data.PatientProfile(profile.name, consented=True, returning=profile.returning), None
@@ -233,8 +269,8 @@ async def _consent_gate(  # noqa: PLR0913 - what the gate looks at
                 delay_seconds=int(CONSENT_WINDOW.total_seconds()) + 60,
             )
         notice = fixed.consent_notice(voice, clinic.notice_url)
-        return BotReply(notice, outbound.buttons(notice, CONSENT_BUTTONS), None)
-    return profile, fixed.consent_reminder(voice, clinic.notice_url)
+        return BotReply(notice, outbound.buttons(notice, consent_buttons(clinic.notice_version)))
+    return profile, ConsentRequest(fixed.consent_reminder(voice, clinic.notice_url), clinic.notice_version)
 
 
 async def _prepare(  # noqa: PLR0913 - what one prompt is built from
@@ -246,7 +282,8 @@ async def _prepare(  # noqa: PLR0913 - what one prompt is built from
     clinic: data.ClinicProfile,
     profile: data.PatientProfile,
     now: datetime,
-    consent_request: str | None,
+    consent_request: ConsentRequest | None,
+    turn_key: str,
 ) -> tuple[TurnState, list[dict[str, Any]], list[dict[str, Any]]]:
     async with ctx.db.clinic_transaction(clinic_id) as conn:
         services = await data.active_services(conn)
@@ -267,13 +304,12 @@ async def _prepare(  # noqa: PLR0913 - what one prompt is built from
         upcoming=upcoming,
         offered={slot.key: slot for slot in offered},
         turn_started_at=now,
+        turn_key=turn_key,
         allowed_link_hosts=_clinic_hosts(clinic),
         consent_request=consent_request,
     )
-    slots_by_start = {
-        slot.starts_at: OfferedSlot(slot.key, slot.service_id, slot.service_name, slot.starts_at, slot.label)
-        for slot in offered
-    }
+    slots_by_start = {slot.starts_at: _offered(slot) for slot in offered}
+    shown = [_offered(slot) for slot in offered if slot.shown_at is not None][-MAX_SHOWN_SLOTS:]
     system = system_blocks(
         ctx.settings.bot_prompt_version,
         clinic=clinic,
@@ -282,7 +318,7 @@ async def _prepare(  # noqa: PLR0913 - what one prompt is built from
         now=now,
         patient=PatientContext(profile, upcoming),
     )
-    return state, system, build_messages(rows, slots_by_start, clinic.tz)
+    return state, system, build_messages(rows, slots_by_start, clinic.tz, shown=shown)
 
 
 async def _finish(  # noqa: PLR0913 - the turn's results, written together
@@ -295,9 +331,12 @@ async def _finish(  # noqa: PLR0913 - the turn's results, written together
     reply: BotReply | None,
     outcome: Outcome | None,
     result: AgentResult | None,
+    hand_over: bool,
     latency_ms: int,
 ) -> bool:
-    """Queues the reply, marks the batch handled and logs the turn, in one transaction."""
+    """Queues the reply, marks the slots it shows, hands the chat to a person if the turn
+    escalated, marks the batch handled and logs the turn, all in one transaction: a turn that
+    fails before this point is retried as if it never happened."""
     async with ctx.db.clinic_transaction(clinic_id) as conn:
         if not await conversations.holds_lease(conn, conversation_id, lease_token):
             raise LeaseLostError
@@ -316,6 +355,10 @@ async def _finish(  # noqa: PLR0913 - the turn's results, written together
                 idempotency_key=f"reply:{max(batch, key=lambda message: message.created_at).id}",
                 prompt_version=reply.prompt_version,
             )
+            if reply.slot_keys:
+                await data.mark_slots_shown(conn, conversation_id, reply.slot_keys)
+        if hand_over:
+            await conversations.set_status(conn, conversation_id, "human")
         await conversations.mark_handled(conn, [message.id for message in batch])
         if outcome is not None:
             usage = result.usage if result else None
@@ -362,34 +405,53 @@ async def _alert_only(  # noqa: PLR0913 - what the alert needs
     signal: str,
     name: str | None,
     now: datetime,
-) -> Escalation | None:
+    turn_key: str,
+) -> bool:
+    """Alerts the team about an urgency in a chat the bot does not answer. While the same signal
+    is still open from less than 2 h ago it does not alert again; a new signal, or trouble
+    breathing or swallowing, always does. True if an escalation was opened."""
+    repeat = not is_breathing_signal(signal)
     async with ctx.db.clinic_transaction(clinic_id) as conn:
-        if await data.open_escalation_since(conn, conversation_id, "urgent", now - URGENT_REPEAT_WINDOW):
-            return None
-    return await escalate(
+        if repeat and await data.open_escalation_since(
+            conn, conversation_id, "urgent", now - URGENT_REPEAT_WINDOW, reason=signal
+        ):
+            return False
+    await escalate(
         ctx.db,
         clinic_id=clinic_id,
         conversation_id=conversation_id,
         reason=signal,
         priority="urgent",
-        summary=_urgent_summary(name, signal),
+        summary=_urgent_summary(name, signal, answered=False),
+        turn_key=turn_key,
     )
+    return True
 
 
 def _burst_text(batch: Sequence[PendingMessage]) -> str:
     return "\n".join(part for message in batch for part in (message.content, message.transcription) if part)
 
 
-def _consent_tap(batch: Sequence[PendingMessage]) -> tuple[str, UUID] | None:
-    """The patient's last answer to the notice in this batch, with the message that carries it."""
+def _unheard_voice_note(batch: Sequence[PendingMessage]) -> bool:
+    return any(message.type == "audio" and not message.transcription for message in batch)
+
+
+def _consent_tap(batch: Sequence[PendingMessage], version: str) -> tuple[str, UUID] | None:
+    """The patient's last answer to the current notice in this batch, with the message that
+    carries it. A tap on an older notice does not count."""
+    answers = {consent_accept_id(version), CONSENT_DECLINE_ID}
     for message in reversed(batch):
-        if message.reply_id in {CONSENT_ACCEPT_ID, CONSENT_DECLINE_ID}:
+        if message.reply_id in answers:
             return message.reply_id, message.id
     return None
 
 
+def _offered(slot: data.StoredSlot) -> OfferedSlot:
+    return OfferedSlot(slot.key, slot.service_id, slot.service_name, slot.starts_at, slot.label)
+
+
 def _fixed(text: str) -> BotReply:
-    return BotReply(text, outbound.text(text), None)
+    return BotReply(text, outbound.text(text))
 
 
 def _clinic_hosts(clinic: data.ClinicProfile) -> frozenset[str]:
@@ -402,15 +464,27 @@ def _patient_label(name: str | None) -> str:
     return first or "sin nombre registrado"
 
 
-def _urgent_summary(name: str | None, signal: str) -> str:
+def _urgent_summary(name: str | None, signal: str, *, answered: bool) -> str:
+    wants = f"Paciente: {_patient_label(name)}. Quiere: atención por una posible urgencia ({signal})."
+    if answered:
+        return (
+            f"{wants} Intentado: se le mandó el mensaje de urgencia, con el 911 si le cuesta "
+            "respirar o tragar."
+        )
     return (
-        f"Paciente: {_patient_label(name)}. Quiere: atención urgente ({signal}). "
-        "Intentado: el filtro de urgencia lo pasó al equipo de inmediato."
+        f"{wants} Intentado: nada; el chat estaba en pausa o con el equipo y no se le contestó. Escríbele ya."
     )
 
 
-def _fallback_summary(name: str | None, error_kind: str | None) -> str:
+def _fallback_summary(name: str | None) -> str:
     return (
-        f"Paciente: {_patient_label(name)}. Quiere: no se pudo saber, el asistente falló "
-        f"({error_kind or 'sin detalle'}). Intentado: se le avisó que el equipo le responderá."
+        f"Paciente: {_patient_label(name)}. Quiere: revisa su último mensaje; el asistente no pudo "
+        "contestarlo por una falla técnica. Intentado: se le dijo que el equipo le responderá."
+    )
+
+
+def _unheard_summary(name: str | None) -> str:
+    return (
+        f"Paciente: {_patient_label(name)}. Quiere: mandó una nota de voz que no se pudo transcribir. "
+        "Intentado: se le dijo que el equipo la escuchará; escúchala en la bandeja y contéstale."
     )

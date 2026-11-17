@@ -149,7 +149,9 @@ async def upcoming_appointments(
 async def accept_consent(
     conn: AsyncConnection, clinic_id: UUID, patient_id: UUID, notice_version: str, message_id: UUID
 ) -> None:
-    """Proof of consent: the notice version and the message where the patient tapped Acepto."""
+    """Proof of consent: the notice version and the message where the patient tapped Acepto. The
+    patient's row is locked first, so an erasure running at the same time waits and then sees it."""
+    await conn.execute("select id from public.patients where id = %s for update", (patient_id,))
     await conn.execute(
         """
         insert into public.consents (clinic_id, patient_id, notice_version, accepted_at, message_id)
@@ -176,51 +178,40 @@ async def consent_requested_at(conn: AsyncConnection, conversation_id: UUID) -> 
     return row[0] if row else None
 
 
-async def oldest_unerased_unconsented(
-    conn: AsyncConnection, conversation_id: UUID, notice_version: str | None
-) -> datetime | None:
-    """When the oldest message still kept of a patient who has not accepted the notice arrived."""
+async def oldest_unerased_unconsented(conn: AsyncConnection, conversation_id: UUID) -> datetime | None:
+    """When the oldest message still kept of a patient who never accepted any notice arrived."""
     cursor = await conn.execute(
         """
         select min(m.created_at)
         from public.messages m join public.conversations c on c.id = m.conversation_id
         where m.conversation_id = %s and m.direction = 'inbound'
           and (m.content is not null or m.transcription is not null or m.media_path is not null)
-          and not exists (
-            select 1 from public.consents k where k.patient_id = c.patient_id and k.notice_version = %s
-          )
+          and not exists (select 1 from public.consents k where k.patient_id = c.patient_id)
         """,
-        (conversation_id, notice_version),
+        (conversation_id,),
     )
     row = await cursor.fetchone()
     return row[0] if row else None
 
 
-async def unconsented_media_paths(
-    conn: AsyncConnection, conversation_id: UUID, notice_version: str | None, before: datetime
-) -> list[str]:
-    """Files that erase_unconsented will let go of, to delete from Storage first."""
+async def erase_unconsented(
+    conn: AsyncConnection, conversation_id: UUID, before: datetime
+) -> list[str | None]:
+    """Erases what a patient who never accepted any version of the notice wrote up to `before`:
+    text, transcriptions and the path of their files, which the caller deletes from Storage
+    after the commit. A patient who accepted an earlier version keeps everything: that consent
+    still covers what they wrote under it. The patient's row is locked, so an Acepto arriving
+    meanwhile is either seen here or waits. Returns the erased messages' file paths (None for
+    messages without a file)."""
     cursor = await conn.execute(
         """
-        select m.media_path
-        from public.messages m join public.conversations c on c.id = m.conversation_id
-        where m.conversation_id = %s and m.direction = 'inbound' and m.created_at <= %s
-          and m.media_path is not null
-          and not exists (
-            select 1 from public.consents k where k.patient_id = c.patient_id and k.notice_version = %s
-          )
+        select p.id from public.patients p join public.conversations c on c.patient_id = p.id
+        where c.id = %s for update of p
         """,
-        (conversation_id, before, notice_version),
+        (conversation_id,),
     )
-    return [row[0] for row in await cursor.fetchall()]
-
-
-async def erase_unconsented(
-    conn: AsyncConnection, conversation_id: UUID, notice_version: str | None, before: datetime
-) -> int:
-    """Erases what a patient who never accepted the notice wrote up to `before`: text,
-    transcriptions and the path of their files (deleted from Storage before). Nothing if the
-    patient accepted in the meantime. Returns how many messages were erased."""
+    if await cursor.fetchone() is None:
+        return []
     cursor = await conn.execute(
         """
         with target as (
@@ -229,20 +220,18 @@ async def erase_unconsented(
           join public.conversations c on c.id = m.conversation_id
           where m.conversation_id = %s and m.direction = 'inbound' and m.created_at <= %s
             and (m.content is not null or m.transcription is not null or m.media_path is not null)
-            and not exists (
-              select 1 from public.consents k
-              where k.patient_id = c.patient_id and k.notice_version = %s
-            )
+            and not exists (select 1 from public.consents k where k.patient_id = c.patient_id)
           for update of m
         )
         update public.messages m
         set content = null, transcription = null, media_path = null
         from target
         where m.id = target.id
+        returning target.media_path
         """,
-        (conversation_id, before, notice_version),
+        (conversation_id, before),
     )
-    return cursor.rowcount
+    return [row[0] for row in await cursor.fetchall()]
 
 
 # History ----------------------------------------------------------------------------------------
@@ -296,12 +285,14 @@ class StoredSlot:
     starts_at: datetime
     label: str
     offered_at: datetime
+    shown_at: datetime | None = None  # when the patient saw it in a message of the bot
 
 
 async def offered_slots(conn: AsyncConnection, conversation_id: UUID, *, since: datetime) -> list[StoredSlot]:
     cursor = await conn.execute(
         """
-        select o.slot_key, o.service_id, s.name, o.provider_id, o.starts_at, o.label, o.offered_at
+        select o.slot_key, o.service_id, s.name, o.provider_id, o.starts_at, o.label, o.offered_at,
+               o.shown_at
         from public.offered_slots o join public.services s on s.id = o.service_id
         where o.conversation_id = %s and o.offered_at >= %s
         order by o.offered_at, o.starts_at
@@ -351,7 +342,28 @@ async def save_offered_slots(
     return offered_at
 
 
+async def mark_slots_shown(
+    conn: AsyncConnection, conversation_id: UUID, slots: Sequence[tuple[str, UUID]]
+) -> None:
+    """The slots (key, service) a reply puts in front of the patient: only these can be booked
+    from the next turn on."""
+    for key, service_id in slots:
+        await conn.execute(
+            """
+            update public.offered_slots set shown_at = now()
+            where conversation_id = %s and slot_key = %s and service_id = %s
+            """,
+            (conversation_id, key, service_id),
+        )
+
+
 # Escalations and team alerts --------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class OpenedEscalation:
+    id: UUID
+    created: bool  # False: a retried turn found the one it had already opened
 
 
 async def insert_escalation(  # noqa: PLR0913 - one value per column
@@ -362,33 +374,42 @@ async def insert_escalation(  # noqa: PLR0913 - one value per column
     reason: str,
     priority: str,
     summary: str,
-) -> UUID:
+    turn_key: str,
+) -> OpenedEscalation:
+    """One escalation per turn and priority (`turn_key`): a retry of the same turn finds it."""
     cursor = await conn.execute(
         """
-        insert into public.escalations (clinic_id, conversation_id, reason, priority, summary)
-        values (%s, %s, %s, %s, %s)
+        insert into public.escalations (clinic_id, conversation_id, reason, priority, summary, turn_key)
+        values (%s, %s, %s, %s, %s, %s)
+        on conflict (clinic_id, turn_key) do nothing
         returning id
         """,
-        (clinic_id, conversation_id, reason, priority, summary),
+        (clinic_id, conversation_id, reason, priority, summary, turn_key),
     )
     row = await cursor.fetchone()
-    assert row is not None  # noqa: S101 - insert ... returning always returns a row
-    escalation_id: UUID = row[0]
-    return escalation_id
+    if row is not None:
+        return OpenedEscalation(row[0], created=True)
+    cursor = await conn.execute("select id from public.escalations where turn_key = %s", (turn_key,))
+    existing = await cursor.fetchone()
+    if existing is None:
+        raise LookupError("the escalation is not there right after a conflicting insert")
+    return OpenedEscalation(existing[0], created=False)
 
 
 async def open_escalation_since(
-    conn: AsyncConnection, conversation_id: UUID, priority: str, since: datetime
+    conn: AsyncConnection, conversation_id: UUID, priority: str, since: datetime, *, reason: str | None = None
 ) -> bool:
-    """Whether the team already has an open escalation of this priority for the conversation."""
+    """Whether the team already has an open escalation of this priority (and reason, if given)
+    for the conversation, opened since `since`."""
     cursor = await conn.execute(
         """
         select exists (
           select 1 from public.escalations
           where conversation_id = %s and priority = %s and status = 'open' and created_at >= %s
+            and (%s::text is null or reason = %s::text)
         )
         """,
-        (conversation_id, priority, since),
+        (conversation_id, priority, since, reason, reason),
     )
     row = await cursor.fetchone()
     return bool(row and row[0])
@@ -419,19 +440,31 @@ class PendingAlert:
 
 async def claim_team_alert(conn: AsyncConnection, escalation_id: UUID) -> PendingAlert | None:
     """The next alert of the escalation not sent yet, marked as on its way before Meta is called:
-    if the answer is lost it is never sent twice."""
+    if the answer is lost it is never sent twice. Alerts of people who no longer have a phone for
+    alerts are marked failed first, so they never hold back the rest of the team."""
+    await conn.execute(
+        """
+        update public.team_alerts t set status = 'failed', send_started_at = now()
+        where t.escalation_id = %s and t.status = 'pending'
+          and not exists (
+            select 1 from public.clinic_users u
+            where u.clinic_id = t.clinic_id and u.user_id = t.user_id and u.alert_phone is not null
+          )
+        """,
+        (escalation_id,),
+    )
     cursor = await conn.execute(
         """
         update public.team_alerts t set status = 'unknown', send_started_at = now()
         from public.clinic_users u, public.escalations e, public.clinics c
         where t.id = (
-                select id from public.team_alerts
-                where escalation_id = %s and status = 'pending'
-                order by created_at, id limit 1 for update skip locked
+                select a.id from public.team_alerts a
+                join public.clinic_users m on m.clinic_id = a.clinic_id and m.user_id = a.user_id
+                where a.escalation_id = %s and a.status = 'pending' and m.alert_phone is not null
+                order by a.created_at, a.id limit 1 for update of a skip locked
               )
           and u.clinic_id = t.clinic_id and u.user_id = t.user_id
           and e.id = t.escalation_id and c.id = t.clinic_id
-          and u.alert_phone is not null
         returning t.id, u.display_name, u.alert_phone, e.priority, e.conversation_id, c.name
         """,
         (escalation_id,),

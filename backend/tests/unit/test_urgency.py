@@ -26,12 +26,19 @@ SHOULD_FIRE = [
     ("dolor fuertisimo en el colmillo", PAIN),
     ("oiga es que me duele muchisimo la muela ya no aguanto", PAIN),
     ("buenas noches, me duelen mucho los dientes de abajo", PAIN),
+    ("a mi hijo le duele muchísimo la muela", PAIN),
+    ("buenas, dolor de muela muy fuerte", PAIN),
+    ("dolor de muela insoportable", PAIN),
+    ("me duele un montón", PAIN),
+    ("me duele bien gacho", PAIN),
+    ("me sigue doliendo muchísimo", PAIN),
     # Bleeding that does not stop
     ("no para de sangrar desde que me sacaron la muela", BLEEDING),
     ("estoy sangrando mucho", BLEEDING),
     ("me sigue saliendo mucha sangre", BLEEDING),
     ("sangra y sangra la encia", BLEEDING),
     ("tengo sangrado desde ayer y no se detiene", BLEEDING),
+    ("no le para de sangrar el labio a mi niña", BLEEDING),
     # Swelling of face or neck
     ("tengo la cara hinchada", SWELLING),
     ("se me hincho el cachete", SWELLING),
@@ -40,6 +47,9 @@ SHOULD_FIRE = [
     ("tengo una bola en el cuello", SWELLING),
     ("creo que tengo una postemilla", SWELLING),
     ("tengo un absceso", SWELLING),
+    ("se me hincharon los labios", SWELLING),
+    ("tengo la cara hinchadísima", SWELLING),
+    ("tengo la lengua hinchada", SWELLING),
     # Fever with dental pain
     ("tengo fiebre y me duele la muela", FEVER),
     ("tengo calentura y la encia hinchada", FEVER),
@@ -49,10 +59,15 @@ SHOULD_FIRE = [
     ("se me quebro la muela", TRAUMA),
     ("a mi hijo le pegaron un balonazo en los dientes", TRAUMA),
     ("se me partio el diente de enfrente", TRAUMA),
+    ("mi hijo se cayó y se pegó en la boca", TRAUMA),
+    ("se me callo el diente de enfrente con el golpe", TRAUMA),
     # Trouble swallowing or breathing
     ("no puedo tragar", BREATHING),
     ("me cuesta respirar", BREATHING),
     ("siento que me ahogo", BREATHING),
+    ("se me cierra la garganta", BREATHING),
+    ("mi papá no puede tragar", BREATHING),
+    ("me asfixio", BREATHING),
 ]
 
 SHOULD_NOT_FIRE = [
@@ -74,6 +89,9 @@ SHOULD_NOT_FIRE = [
     "con los brackets me cuesta comer",
     "no puedo ir mañana a mi cita",
     "mi muela del juicio está saliendo, ¿la pueden revisar?",
+    "me duelen los dientes con los cambios de temperatura",
+    "ya me salió la muela del juicio",
+    "ya le salió el primer diente a mi bebé",
 ]
 
 

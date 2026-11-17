@@ -7,10 +7,10 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from app.bot.history import build_messages
-from app.bot.prompt import PROMPTS_DIR, opening_hours, spoken_moment, template
-from app.bot.reply import CONSENT_ACCEPT_ID, OfferedSlot
+from app.bot.prompt import PROMPTS_DIR, PatientContext, opening_hours, spoken_moment, system_blocks, template
+from app.bot.reply import OfferedSlot, consent_accept_id
 from app.core.config import Settings
-from app.db.bot import HistoryRow
+from app.db.bot import ClinicProfile, HistoryRow, PatientProfile
 from app.scheduling.availability import WeeklyHours
 
 DOC = Path(__file__).resolve().parents[3] / "docs" / "prompt-del-bot.md"
@@ -75,7 +75,7 @@ def test_history_starts_and_ends_with_the_patient_and_marks_what_the_code_adds()
             row("inbound", "Jue 4:00 pm", type="interactive", reply_id="2026-11-19T16:00:00-06:00"),
             row("inbound", None, type="audio", transcription="y si se puede temprano mejor"),
             row("inbound", None, type="audio"),
-            row("inbound", "Acepto", type="interactive", reply_id=CONSENT_ACCEPT_ID),
+            row("inbound", "Acepto", type="interactive", reply_id=consent_accept_id("2026-10")),
         ],
         {start: slot},
         TZ,
@@ -96,3 +96,36 @@ def test_a_button_id_that_is_not_an_offered_slot_adds_nothing() -> None:
         [row("inbound", "Jue 4:00 pm", type="interactive", reply_id="2030-01-01T10:00:00-06:00")], {}, TZ
     )
     assert messages == [{"role": "user", "content": "<mensaje_paciente>Jue 4:00 pm</mensaje_paciente>"}]
+
+
+def test_a_clinic_whose_data_contains_braces_still_gets_its_prompt() -> None:
+    clinic = ClinicProfile(
+        id=uuid4(), name="Dental {{ahora}} Sonrisa", city="Oaxaca", address=None, maps_url=None, tz=TZ,
+        doctor=None, formal=False, urgency_signals=("dolor fuerte",), notice_url=None, notice_version=None,
+        payment_methods="Efectivo {{y}} tarjeta", cancellation_policy=None, bot_enabled=True,
+    )  # fmt: skip
+    blocks = system_blocks(
+        "1.0",
+        clinic=clinic,
+        services=[],
+        hours=[],
+        now=datetime(2026, 11, 17, 16, 35, tzinfo=TZ),
+        patient=PatientContext(PatientProfile(None, consented=True, returning=False), []),
+    )
+    assert "Dental {{ahora}} Sonrisa" in blocks[0]["text"]  # the clinic's text, as written
+    assert "Efectivo {{y}} tarjeta" in blocks[0]["text"]
+
+
+def test_dates_of_this_year_go_without_the_year() -> None:
+    moment = datetime(2026, 11, 19, 16, 0, tzinfo=TZ)
+    assert spoken_moment(moment, this_year=2026) == "jueves 19 de noviembre, 4:00 pm"
+    assert spoken_moment(moment, this_year=2025) == "jueves 19 de noviembre de 2026, 4:00 pm"
+
+
+def test_the_slots_already_shown_close_the_history() -> None:
+    start = datetime(2026, 11, 19, 22, 0, tzinfo=UTC)
+    slot = OfferedSlot("abcd2345", uuid4(), "Limpieza", start, "Jue 4:00 pm")
+    messages = build_messages([row("inbound", "el del jueves en la tarde")], {}, TZ, shown=[slot])
+    assert messages[-1]["content"].splitlines()[-1] == (
+        "(Horarios que ya le mostraste: «Jue 4:00 pm» de Limpieza, inicio exacto: 2026-11-19T16:00:00-06:00)"
+    )

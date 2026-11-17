@@ -2,7 +2,7 @@
 begin;
 \ir 00_helpers.psql
 
-select plan(14);
+select plan(17);
 
 create function pg_temp.as_backend(p_sql text, p_clinic uuid default null) returns text language sql as $$
   select (pg_temp.run_as('axon_app', p_sql, coalesce(p_clinic, pg_temp.clinic_a()))).state
@@ -93,6 +93,26 @@ select is(pg_temp.as_backend($$
   update public.conversations set consent_requested_at = now()
   where id = 'a7000000-0000-4000-8000-000000000001'
 $$), null, 'el backend anota cuándo pidió el consentimiento');
+
+-- Review of 1C: slots shown to the patient and one escalation per turn and priority.
+
+select is(pg_temp.as_backend($$
+  update public.offered_slots set shown_at = now() where id = 'a0c00000-0000-4000-8000-000000000001'
+$$), null, 'el backend anota cuándo le mostró un horario al paciente');
+
+select is(pg_temp.as_backend($$
+  insert into public.escalations (clinic_id, conversation_id, reason, priority, summary, turn_key)
+  values ('a0000000-0000-4000-8000-000000000001', 'a7000000-0000-4000-8000-000000000001', 'dolor fuerte',
+          'urgent', 'Resumen', 'turn:a8000000-0000-4000-8000-000000000001:urgent'),
+         ('a0000000-0000-4000-8000-000000000001', 'a7000000-0000-4000-8000-000000000001', 'dolor fuerte',
+          'urgent', 'Resumen', 'turn:a8000000-0000-4000-8000-000000000001:urgent')
+$$), '23505', 'un turno abre un solo escalado de cada prioridad, aunque se reintente');
+
+select is(pg_temp.as_backend($$
+  insert into public.escalations (clinic_id, conversation_id, reason, priority, summary, turn_key)
+  values ('a0000000-0000-4000-8000-000000000001', 'a7000000-0000-4000-8000-000000000001', 'x',
+          'normal', 'Resumen', 'le duele mucho')
+$$), '23514', 'la clave del turno es un id, nunca texto del paciente');
 
 select ok(
   exists (select 1 from pg_constraint where conname = 'escalations_clinic_id_id_key'),

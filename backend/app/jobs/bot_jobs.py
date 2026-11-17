@@ -3,6 +3,7 @@ patient who never accepted the privacy notice wrote."""
 
 import logging
 from datetime import timedelta
+from uuid import UUID
 
 from app.db import bot as data
 from app.db.conversations import database_now
@@ -82,29 +83,42 @@ async def handle_team_alert(ctx: WorkerContext, job: TeamAlertJob) -> None:
 
 
 async def handle_erase_unconsented(ctx: WorkerContext, job: EraseUnconsentedJob) -> None:
-    """Erases what the patient wrote more than 24 h ago while they have not accepted the notice,
-    and comes back for what is newer. Files first, then the rows: deleting a file twice is
-    harmless, a row pointing to a deleted file is not."""
+    """Erases what a patient who never accepted the notice wrote more than 24 h ago, and comes
+    back for what is newer. Rows first, then files: once a row no longer points to a file, the
+    file is never shown again, and a patient who taps Acepto meanwhile keeps everything (the rows
+    are erased only under the lock of the patient's row, after checking again)."""
     async with ctx.db.clinic_transaction(job.clinic_id) as conn:
-        clinic = await data.clinic_profile(conn)
         now = await database_now(conn)
-        before = now - CONSENT_WINDOW
-        paths = await data.unconsented_media_paths(conn, job.conversation_id, clinic.notice_version, before)
-    if paths and ctx.media_store is None:
-        raise MediaStoreError("storage not configured")
-    for path in paths:
-        assert ctx.media_store is not None  # noqa: S101 - checked just above
-        await ctx.media_store.delete(job.clinic_id, path)
-    async with ctx.db.clinic_transaction(job.clinic_id) as conn:
-        erased = await data.erase_unconsented(conn, job.conversation_id, clinic.notice_version, before)
-        oldest = await data.oldest_unerased_unconsented(conn, job.conversation_id, clinic.notice_version)
+        paths = await data.erase_unconsented(conn, job.conversation_id, now - CONSENT_WINDOW)
+        oldest = await data.oldest_unerased_unconsented(conn, job.conversation_id)
         if oldest is not None:
             delay = (oldest + CONSENT_WINDOW - now).total_seconds() + 60
             await enqueue(conn, job, delay_seconds=max(60, int(delay)))
-    logger.info(
+    files = [path for path in paths if path]
+    left = 0
+    for path in files:
+        try:
+            await _delete_file(ctx, job.clinic_id, path)
+        except MediaStoreError:
+            # No row points to it any more and its path carries ids only; the Storage cleanup
+            # of milestone 1D removes files without a message.
+            left += 1
+    log = logger.error if left else logger.info
+    log(
         "bot.unconsented_erased",
-        extra={"conversation_id": str(job.conversation_id), "files": len(paths), "messages": erased},
+        extra={
+            "conversation_id": str(job.conversation_id),
+            "messages": len(paths),
+            "files": len(files),
+            "files_left": left,
+        },
     )
+
+
+async def _delete_file(ctx: WorkerContext, clinic_id: UUID, path: str) -> None:
+    if ctx.media_store is None:
+        raise MediaStoreError("storage not configured")
+    await ctx.media_store.delete(clinic_id, path)
 
 
 def _one_line(text: str | None) -> str | None:

@@ -5,6 +5,7 @@ rules, examples and its <consultorio> block) with the cache mark, and last the t
 patient, which change every turn. Nothing that changes per turn goes in the first part.
 """
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, time
@@ -17,6 +18,7 @@ from app.db.bot import ClinicProfile, PatientProfile, ServiceInfo, UpcomingAppoi
 from app.scheduling.availability import WeeklyHours
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
+_VARIABLE = re.compile(r"\{\{([a-z_.]+)\}\}")
 _MAX_FIRST_NAME = 30
 _SPLIT = "<contexto>"
 
@@ -67,7 +69,7 @@ def system_blocks(  # noqa: PLR0913 - the parts of one prompt
         _SPLIT + turn_part,
         {
             "ahora": spoken_moment(now.astimezone(clinic.tz)),
-            "paciente.bloque": patient_block(patient, clinic),
+            "paciente.bloque": patient_block(patient, clinic, this_year=now.astimezone(clinic.tz).year),
         },
     )
     return [
@@ -91,7 +93,8 @@ def clinic_block(clinic: ClinicProfile, services: Sequence[ServiceInfo], hours: 
     return "\n".join(lines)
 
 
-def patient_block(patient: PatientContext, clinic: ClinicProfile) -> str:
+def patient_block(patient: PatientContext, clinic: ClinicProfile, *, this_year: int) -> str:
+    year = this_year
     profile = patient.profile
     lines = [
         f"Nombre: {_first_name(profile.name) or 'desconocido'}",
@@ -102,7 +105,7 @@ def patient_block(patient: PatientContext, clinic: ClinicProfile) -> str:
         lines.append("Citas próximas:")
         lines.extend(
             f"- cita {appointment.id}: {appointment.service_name}, "
-            f"{spoken_moment(appointment.starts_at.astimezone(clinic.tz))}"
+            f"{spoken_moment(appointment.starts_at.astimezone(clinic.tz), this_year=year)}"
             for appointment in patient.upcoming
         )
     else:
@@ -110,9 +113,12 @@ def patient_block(patient: PatientContext, clinic: ClinicProfile) -> str:
     return "\n".join(lines)
 
 
-def spoken_moment(moment: datetime) -> str:
-    """'martes 17 de noviembre de 2026, 4:35 pm', as people say it."""
-    day = f"{WEEKDAYS[moment.weekday()]} {moment.day} de {MONTHS[moment.month - 1]} de {moment.year}"
+def spoken_moment(moment: datetime, *, this_year: int | None = None) -> str:
+    """'martes 17 de noviembre de 2026, 4:35 pm', as people say it; without the year when it is
+    `this_year` ('jueves 19 de noviembre, 4:00 pm')."""
+    day = f"{WEEKDAYS[moment.weekday()]} {moment.day} de {MONTHS[moment.month - 1]}"
+    if moment.year != this_year:
+        day += f" de {moment.year}"
     return f"{day}, {_clock(moment.time())}"
 
 
@@ -167,8 +173,9 @@ def _first_name(name: str | None) -> str | None:
 
 
 def _fill(text: str, values: dict[str, str]) -> str:
-    for key, value in values.items():
-        text = text.replace("{{" + key + "}}", value)
-    if "{{" in text:
-        raise ValueError("the prompt has a variable without a value")
-    return text
+    """One pass over the template's own variables: a value that happens to contain "{{" (a
+    clinic's name, its policies) is never read as a variable."""
+    missing = set(_VARIABLE.findall(text)) - values.keys()
+    if missing:
+        raise ValueError(f"the prompt has variables without a value: {sorted(missing)}")
+    return _VARIABLE.sub(lambda match: values[match.group(1)], text)

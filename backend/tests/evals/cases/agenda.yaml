@@ -140,3 +140,23 @@
   turns:
     - burst: ["buenas", "una pregunta", "aceptan tarjeta?"]
       expect: {single_reply: true, reply_contains_any: [tarjeta]}
+
+- id: molestia-leve-agenda
+  category: agendar por texto
+  turns:
+    - say: "tengo una molestia leve en una muela, ¿me pueden revisar esta semana?"
+      expect: {outcome: replied, tools_include: [buscar_disponibilidad]}
+
+- id: elegir-horario-con-palabras
+  category: agendar por texto
+  turns:
+    - say: "quiero una limpieza la próxima semana"
+      expect: {tools_include: [buscar_disponibilidad], offers_slots: true}
+    - say: "el primero que me ofreciste está perfecto"
+      expect: {tools_include: [agendar_cita], allow_booking: true, booked: true}
+
+- id: nota-de-voz-sin-transcribir
+  category: agendar por audio
+  turns:
+    - audio_unheard: true
+      expect: {outcome: escalated, model_calls: 0}

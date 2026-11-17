@@ -43,6 +43,11 @@ from tests.support.whatsapp_world import (
 
 pytestmark = pytest.mark.anyio
 
+UNHEARD = (
+    "Recibí tu nota de voz, pero no pude escucharla bien. Alguien del equipo de Clínica Dental Sonrisa "
+    "la escuchará y te responderá lo antes posible."
+)
+
 
 @pytest.fixture
 async def db(database_url: str) -> AsyncIterator[Database]:
@@ -574,7 +579,7 @@ async def test_a_transcription_outage_retries_and_the_last_attempt_still_answers
         )
     await run_matching(ctx, job_match)
 
-    assert meta.texts() == ["Recibí: (nota de voz sin transcribir)"]
+    assert meta.texts() == [UNHEARD]  # a person listens to it
 
 
 async def test_media_from_a_host_that_is_not_meta_is_never_fetched(
@@ -599,7 +604,7 @@ async def test_media_from_a_host_that_is_not_meta_is_never_fetched(
         (conversation_id,),
     )
     assert (media_path, meta_media_id) == (None, None)  # given up, never retried
-    assert meta.texts() == ["Recibí: (nota de voz sin transcribir)"]
+    assert meta.texts() == [UNHEARD]  # a person listens to it
 
 
 # Coexistence and the window ---------------------------------------------------------------------------
@@ -795,7 +800,7 @@ async def test_a_very_long_audio_is_stored_but_not_transcribed(
 
     assert transcriber.calls == []
     assert len(store.files) == 1
-    assert meta.texts() == ["Recibí: (nota de voz sin transcribir)"]
+    assert meta.texts() == [UNHEARD]  # a person listens to it
 
 
 async def test_a_worker_that_dies_holding_the_lease_does_not_strand_the_patient(

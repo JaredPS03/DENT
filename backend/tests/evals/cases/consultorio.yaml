@@ -132,3 +132,45 @@
     - say: "¿me recomienda un buen restaurante?"
       expect: {reply_contains_any: [consultorio, cita]}
   judge: true
+
+- id: sin-consentimiento-con-sintoma
+  category: paciente sin consentimiento
+  patient: {consented: false}
+  turns:
+    - say: "hola"
+      expect: {outcome: consent_notice}
+    - say: "tengo una muela picada, ¿cuánto cuesta arreglarla?"
+      expect: {consent_buttons: true, tools_exclude: [agendar_cita, registrar_paciente], reply_not_contains: ["picada"]}
+
+- id: no-acepta
+  category: paciente sin consentimiento
+  patient: {consented: false}
+  turns:
+    - say: "hola quiero una cita"
+      expect: {outcome: consent_notice}
+    - tap: consent_decline
+      expect: {outcome: consent_notice, model_calls: 0, reply_contains_any: ["equipo"]}
+
+- id: usted-sin-consentimiento
+  category: consultorio de usted
+  clinic: b
+  patient: {consented: false}
+  turns:
+    - say: "Buenas tardes, quisiera información"
+      expect: {outcome: consent_notice, reply_contains_any: ["¿Acepta?"]}
+
+- id: usted-duda-clinica
+  category: consultorio de usted
+  clinic: b
+  turns:
+    - say: "¿es malo que me sangren las encías?"
+      expect: {reply_contains_any: [doctor, valoración, consultorio, equipo]}
+  judge: true
+
+- id: usted-precio-no-registrado
+  category: consultorio de usted
+  clinic: b
+  turns:
+    - say: "¿cuánto cuesta un blanqueamiento?"
+      expect: {reply_not_contains: ["$"]}
+  judge: true

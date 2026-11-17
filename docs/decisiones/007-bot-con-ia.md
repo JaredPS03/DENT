@@ -45,9 +45,40 @@ El 1C reemplaza el bot de eco del 1B por el asistente con IA. La especificación
 8. **Registro:** cada turno queda en `bot_turns` con tokens (incluida la caché), latencia, herramientas, modelo, versión del prompt, cómo terminó y el costo estimado (precios en `app/bot/costs.py`). Cada mensaje del bot guarda su versión del prompt.
 9. **El cliente fija la URL de la API de Anthropic.** El SDK seguiría `ANTHROPIC_BASE_URL`, y los mensajes de pacientes solo deben ir a Anthropic.
 10. **Evaluaciones** (`backend/tests/evals/`):
-    - 63 casos en YAML. Cada uno corre el turno real contra la base local, con Meta simulado y el reloj real; los casos no dependen de fechas fijas.
+    - 82 casos en YAML. Cada uno corre el turno real contra la base local, con Meta simulado y el reloj real; los casos no dependen de fechas fijas.
     - Revisiones en código, y rúbrica de tono y claridad calificada por `claude-sonnet-5-5`.
     - Urgencias, inyección y dudas clínicas no pueden fallar.
+
+## Ajustes tras las revisiones
+
+- **revisor-seguridad** (1 alto, 5 medios, 5 bajos, todos corregidos con su prueba):
+  - **El borrado a las 24 h** solo toca a quien nunca aceptó ninguna versión del aviso. Bloquea la fila del paciente y anula las filas antes de borrar los archivos.
+  - **Horarios:** se anota cuándo se mostró cada uno (`offered_slots.shown_at`). Solo se agenda un horario que el paciente vio en un turno anterior, no uno que la IA buscó y no enseñó.
+  - **Escalados:** uno por turno y prioridad (`escalations.turn_key`). El chat pasa a una persona al cerrar el turno, junto con la respuesta, así que un turno que falla después de escalar se reintenta completo. Una urgencia que llega después de un escalado normal abre el suyo.
+  - **Sin consentimiento,** el escalado guarda un resumen escrito por el código, sin texto de la IA.
+  - **Enlaces:** también los dominios sueltos ("bit.ly/…") pasan por la lista blanca.
+  - **Botón Acepto:** lleva la versión del aviso, así que un toque en un aviso viejo no cuenta.
+  - **Alertas:** si a alguien le quitaron el teléfono para alertas, su alerta se marca como fallida y no frena las demás.
+  - **Urgencia repetida:** con el bot activo, una urgencia nueva siempre alerta.
+  - **Variables del prompt:** se llenan en una sola pasada, para que un `{{` en los datos del consultorio no deje a todos sin respuesta.
+- **revisor-clinico:**
+  - **Filtro de urgencia:**
+    - ahora reconoce cuando le pasa a otra persona ("le duele", "no le para de sangrar", "se pegó"), la garganta que se cierra, la lengua y los labios hinchados, y más formas de decir el dolor;
+    - la hinchazón se reconoce por la raíz de la palabra;
+    - ya no dispara con la temperatura de los alimentos ni con la muela del juicio o el primer diente que salen.
+  - **Mensajes fijos:**
+    - la urgencia manda al 911 solo si cuesta respirar o tragar;
+    - el aviso dice para qué se usan los datos y pone el enlace en su propia línea;
+    - el respaldo ya no promete "en un momento".
+  - **Nota de voz sin transcribir:** pasa al equipo con un mensaje propio, porque podría ser una urgencia.
+  - **Resúmenes del escalado:** dicen si al paciente se le contestó.
+  - **Alerta repetida con el chat en pausa:** si la señal es nueva, o si es de respirar o tragar, se alerta otra vez.
+  - **Prompt:**
+    - prohíbe tranquilizar sobre síntomas, dar cuidados o remedios, nombrar medicamentos y prometer que algo no duele;
+    - reconoce urgencias de otra persona;
+    - acepta un horario elegido con palabras;
+    - en los ejemplos usa los datos del consultorio, no nombres fijos.
+  - **Evaluaciones:** 19 casos nuevos (82 en total) y más revisiones en código.
 
 ## Alternativas
 
