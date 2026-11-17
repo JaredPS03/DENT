@@ -13,9 +13,9 @@ El bot es la recepción del consultorio. Si se equivoca con una cita o con una u
 
 1. Ya en el worker y con el lock de la conversación, junta la ráfaga de mensajes del paciente (espera corta configurable, de 3 a 5 s).
 2. Si hay audio, transcríbelo; el texto entra marcado como transcripción.
-3. Si el bot está apagado para el consultorio (`clinics.bot_enabled`) o en pausa en esta conversación, termina: el mensaje queda en la bandeja.
+3. Si el bot está apagado para el consultorio (`clinics.bot_enabled`) o en pausa en esta conversación, termina: el mensaje queda en la bandeja. Si coincide con el filtro de urgencia, además alerta al equipo, sin escribirle al paciente.
 4. Filtro de urgencia determinista con la lista de señales del consultorio. Si coincide: escala con prioridad urgente, alerta al equipo, manda el mensaje fijo de urgencia y termina.
-5. Puerta de consentimiento en código: si no ha aceptado, manda el aviso con el botón Acepto y termina; al aceptar, retoma el mensaje original.
+5. Puerta de consentimiento en código: si no ha aceptado, manda el aviso con el botón Acepto; al aceptar, retoma el mensaje original. Si escribe sin tocar Acepto, la IA contesta solo dudas generales del consultorio, sin pedir ni guardar síntomas y sin herramientas de agenda, y el aviso se repite. Sin aceptar en 24 h, se borra el contenido de sus mensajes.
 6. Llama a la IA con la parte fija del prompt (con caché) y, al final, la hora actual, el contexto mínimo del paciente y los últimos mensajes.
 7. Bucle de herramientas: máximo 6 llamadas por turno, con tiempo límite por llamada y por turno. Cada herramienta valida permisos y datos en código antes de ejecutar. Si la IA escala con prioridad urgente, el código manda el mensaje fijo de urgencia y termina el turno.
 8. La IA entrega su respuesta con la herramienta interna `responder`. El código valida los límites de WhatsApp y los horarios, y la envía como un solo mensaje. Si la IA termina sin llamar a `responder`, se le pide una vez que la use.

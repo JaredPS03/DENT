@@ -288,9 +288,9 @@ La IA solo actúa a través de estas funciones; el consultorio y el paciente los
 
 1. Llega un mensaje: texto, audio, imagen o botón.
 2. Si es audio, se transcribe.
-3. ¿El bot está en pausa (modo humano)? Sí: solo aparece en la bandeja y el bot no contesta.
+3. ¿El bot está en pausa (modo humano)? Sí: solo aparece en la bandeja y el bot no contesta. Si trae una señal de urgencia, además se alerta al equipo, sin escribirle al paciente: ya lo atiende una persona.
 4. ¿Hay señal de urgencia? Sí: mensaje fijo y alerta al dentista con resumen; si le cuesta respirar o tragar, indicar el 911. El flujo termina aquí.
-5. ¿Aceptó el aviso de privacidad? No: se manda el aviso con el botón Acepto y no se guardan síntomas.
+5. ¿Aceptó el aviso de privacidad? No: se manda el aviso con el botón Acepto y no se guardan síntomas. Si escribe sin tocar Acepto, el bot contesta dudas generales del consultorio (horario, dirección, servicios) sin pedir ni guardar síntomas, repite el aviso y no agenda hasta que acepte. Si en 24 h no aceptó, se borra el contenido de sus mensajes.
 6. La IA entiende qué quiere: agendar o cambiar, pregunta del consultorio, o fuera de tema.
 7. Agendar: `buscar_disponibilidad`. Si hay horario, ofrece 2–3 en botones y, al confirmar, `agendar_cita` y aviso de confirmación. Si no hay, lista de espera (Fase 3) o pasa a humano si urge.
 8. Pregunta del consultorio: contesta con los datos registrados. Fuera de tema: responde con amabilidad y regresa al tema.
