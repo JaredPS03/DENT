@@ -8,7 +8,7 @@ Axon Dental es un asistente de WhatsApp con IA que atiende, agenda y da seguimie
 
 - **Cliente:** el dentista que trabaja solo o con una asistente, que hoy usa libreta y su WhatsApp personal. Nicho inicial: Oaxaca.
 - **Promesa:** ningún paciente se queda sin respuesta y cada cita perdida se intenta recuperar.
-- **Precio:** 1,500 MXN de instalación y 850 MXN al mes por consultorio (plan base; detalle en Costos y planes).
+- **Precio:** 2,490 MXN de instalación y 1,490 MXN al mes por consultorio (plan Esencial; detalle en Costos y planes).
 - **Piloto:** el consultorio de tu prima, en la Fase 1.
 - **Construcción:** código propio sobre la API oficial de WhatsApp, en cinco fases (0 a 4) de unos 4 a 5 meses en total, trabajando solo (estimado).
 
@@ -38,7 +38,7 @@ Agendar por WhatsApp ya no te distingue. Hay tres tipos de rivales: software den
 | Demostrar el retorno | La IA de Meta no da métricas; Aurora no describe reportes | Reporte mensual en pesos desde la Fase 2 y tablero en la Fase 3 |
 | Datos de salud protegidos | Con la IA de Meta, Meta puede usar los mensajes para mejorar su IA | Consentimiento expreso, contrato de encargo y proveedores que no entrenan con los datos |
 
-La frase de venta que resume todo: *"Axon te cuesta 850 al mes y este mes te recuperó X pesos."*
+La frase de venta que resume todo: *"Axon te cuesta 1,490 al mes y este mes te recuperó X pesos."*
 
 ## Fases de implementación
 
@@ -158,7 +158,7 @@ El dentista ve en pesos lo que Axon le genera, y así deja de verlo como un gast
 
 - **Qué cuenta como recuperado, con reglas estrictas:** citas agendadas con el consultorio cerrado, citas reagendadas desde el recordatorio en lugar de perderse, huecos llenados desde la lista de espera, pacientes de recall o reactivación que agendaron, y anticipos cobrados.
 - **Cómo se convierte a pesos:** solo cuenta una cita cuando el paciente asistió, al precio del servicio que el dentista registró. Mejor quedarse corto que inflar: la confianza es lo que vendes.
-- **Retorno:** "Axon te costó 850 y te recuperó X" en grande, con el detalle abajo.
+- **Retorno:** "Axon te costó 1,490 y te recuperó X" en grande (con la mensualidad real del consultorio), con el detalle abajo.
 - **Reporte mensual:** el día 1 de cada mes llega por WhatsApp una imagen con el resumen.
 - **Para ti:** el mismo dato te avisa qué cliente tiene poco retorno y podría cancelar, y con permiso de cada consultorio se vuelve tu mejor testimonio de venta.
 
@@ -434,7 +434,7 @@ Axon Dental cumple con Meta porque es un bot de un negocio concreto (citas y ate
 
 ## Costos y planes
 
-Un consultorio típico te cuesta unos 340 MXN al mes y te paga 850, así que te deja unos 510 MXN (60%) antes de tus costos fijos. Son estimaciones: mídelas con tu prima en la Fase 1.
+Un consultorio típico te cuesta unos 340 MXN al mes y te paga 1,490, así que te deja unos 1,150 MXN (77%) antes de tus costos fijos. Son estimaciones: mídelas con tu prima en la Fase 1.
 
 **Supuestos:** 120 citas al mes, unos 1,000 mensajes cobrables de servicio o utilidad y 100 de marketing; tipo de cambio de 18.5 MXN por dólar. Desde el 1 de octubre de 2026 Meta cobra también las respuestas del negocio; en México, unos US$0.0085 por mensaje de servicio o utilidad ([Mercately](https://blog.mercately.com/?p=30248), [Vonage](https://api.support.vonage.com/hc/en-us/articles/29982160922268-WhatsApp-Service-Messages-Become-Billable-on-Oct-1-2026-What-You-Need-to-Know)) y US$0.0436 por marketing ([Aurora Inbox](https://www.aurorainbox.com/2026/05/26/precio-whatsapp-business-api-mexico-2026/)). Los mensajes que manda el paciente no se cobran.
 
@@ -445,22 +445,22 @@ Un consultorio típico te cuesta unos 340 MXN al mes y te paga 850, así que te 
 | IA conversacional | estimado | 90 |
 | Transcripción de audios | estimado | 10 |
 | **Costo variable** |  | **338** |
-| **Margen sobre 850** | 850 − 338 | **512** |
+| **Margen sobre 1,490** | 1,490 − 338 | **1,152** |
 
-**Costos fijos (aproximados, verifica precios vigentes):** Supabase, servidor y monitoreo, unos 830 MXN al mes en total. Con 2 consultorios ya los cubres. Con 10 consultorios te quedan unos 4,290 MXN al mes; con 30, unos 14,000, más 1,500 de instalación por cada alta.
+**Costos fijos (aproximados, verifica precios vigentes):** Supabase, servidor y monitoreo, unos 830 MXN al mes en total. Con un consultorio ya los cubres. Con 10 consultorios te quedan unos 10,700 MXN al mes; con 30, unos 33,700, más 2,490 de instalación por cada alta.
 
 ### Planes propuestos
 
 | Plan | Precio | Incluye | Mensajes incluidos al mes |
 | --- | --- | --- | --- |
-| Esencial | 850 MXN/mes + 1,500 instalación | Fases 1 a 3: agenda, recordatorios, bandeja, voz, resumen diario, reporte y tablero de dinero recuperado, recall, reseñas y conexión con Google Calendar o Dentalink | 1,000 de servicio y utilidad, 100 de marketing |
-| Completo (sugerido) | 1,350 MXN/mes + 1,500 instalación | Todo lo anterior más anticipos, fotos y comprobantes, seguimiento de ortodoncia e implantes y reactivación ampliada | 1,500 de servicio y utilidad, 300 de marketing |
+| Esencial | 1,490 MXN/mes + 2,490 instalación | Fases 1 a 3: agenda, recordatorios, bandeja, voz, resumen diario, reporte y tablero de dinero recuperado, recall, reseñas y conexión con Google Calendar o Dentalink | 1,000 de servicio y utilidad, 100 de marketing |
+| Completo | Por definir: arriba del Esencial | Todo lo anterior más anticipos, fotos y comprobantes, seguimiento de ortodoncia e implantes y reactivación ampliada | 1,500 de servicio y utilidad, 300 de marketing |
 | Paquete extra | 199 MXN | Se activa al llegar al tope, con aviso previo al 80% | +500 de servicio y utilidad |
 | Paquete marketing | 149 MXN | Campañas extra de recall o reactivación | +100 de marketing |
 
 El reporte y el tablero de dinero recuperado van en todos los planes: son lo que evita cancelaciones. Tu prima, a 500 MXN, te deja unos 160 de margen, suficiente para un piloto.
 
-**Contra la competencia:** Aurora Inbox cobra US$99–179 al mes, Dentalink desde US$29 por usuario y Leadsales US$83.99; con 850 MXN por consultorio quedas muy por debajo. Mantén ese precio para arrancar y súbelo cuando tengas 5 testimonios con su reporte de dinero recuperado.
+**Contra la competencia:** Aurora Inbox cobra US$99–179 al mes, Dentalink desde US$29 por usuario y Leadsales US$83.99; con 1,490 MXN por consultorio (unos US$80) quedas por debajo de los asistentes de WhatsApp, y con reporte de dinero recuperado, que ellos no tienen. Mantén ese precio para arrancar y súbelo cuando tengas 5 testimonios con su reporte.
 
 **Para que cada mensaje rinda:** el bot responde en un solo mensaje completo, usa botones y listas en lugar de preguntas abiertas, y los recordatorios piden la confirmación en el mismo mensaje.
 
