@@ -280,6 +280,29 @@ insert into public.webhook_events (id, clinic_id, field, kind, meta_id, dedup_ke
    '{"messaging_product": "whatsapp", "metadata": {"display_phone_number": "529510000002", "phone_number_id": "200000000000002"}, "statuses": [{"id": "wamid.SEED.B.0002", "status": "read", "timestamp": "1760400000", "recipient_id": "529510000201"}]}',
    null);
 
+-- Milestone 1C: slots the bot offered, alerts to the team and the log of bot turns --------------
+
+insert into public.offered_slots (id, clinic_id, conversation_id, service_id, provider_id, slot_key, starts_at, label) values
+  ('a0c00000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'a7000000-0000-4000-8000-000000000001',
+   'a3000000-0000-4000-8000-000000000001', 'a2000000-0000-4000-8000-000000000001', 'abcd2345',
+   pg_temp.local_ts(2, '10:00'), 'Jue 10:00 am'),
+  ('b0c00000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000001', 'b7000000-0000-4000-8000-000000000001',
+   'b3000000-0000-4000-8000-000000000001', 'b2000000-0000-4000-8000-000000000001', 'wxyz2345',
+   pg_temp.local_ts(2, '11:00'), 'Jue 11:00 am');
+
+insert into public.team_alerts (id, clinic_id, escalation_id, user_id, status, send_started_at, meta_message_id) values
+  ('a0d00000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'ab000000-0000-4000-8000-000000000001',
+   'a1000000-0000-4000-8000-000000000001', 'sent', now() - interval '1 hour', 'wamid.SEED.ALERT.A'),
+  ('b0d00000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000001', 'bb000000-0000-4000-8000-000000000001',
+   'b1000000-0000-4000-8000-000000000001', 'sent', now() - interval '3 days', 'wamid.SEED.ALERT.B');
+
+insert into public.bot_turns (id, clinic_id, conversation_id, model, prompt_version, outcome, model_calls, tools,
+                              input_tokens, output_tokens, cache_read_tokens, latency_ms, cost_microusd) values
+  ('a0e00000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000001', 'a7000000-0000-4000-8000-000000000001',
+   'claude-haiku-5-5', '1.0', 'replied', 2, '{buscar_disponibilidad,responder}', 900, 220, 3800, 2400, 600),
+  ('b0e00000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000001', 'b7000000-0000-4000-8000-000000000001',
+   'claude-haiku-5-5', '1.0', 'escalated', 1, '{escalar_a_humano}', 850, 150, 3800, 1900, 540);
+
 end
 $seed$;
 

@@ -3,8 +3,8 @@
 begin;
 \ir 00_helpers.psql
 
--- 14 panel tables x 5 + 2 hidden tables + 16 (stranger) + 16 (anon).
-select plan(104);
+-- 14 panel tables x 5 + 5 backend-only tables + 19 (stranger) + 19 (anon).
+select plan(113);
 
 create function pg_temp.panel_isolation(p_table text) returns setof text
 language plpgsql as $$
@@ -41,13 +41,14 @@ $$;
 
 select pg_temp.panel_isolation(t) from unnest(pg_temp.panel_tables()) t;
 
--- Raw webhooks and the audit log are not for the panel; sensitive reads go through /api.
+-- Raw webhooks, the audit log and the bot's own tables are not for the panel; sensitive reads
+-- go through /api.
 select is(
   (pg_temp.run_as('authenticated', pg_temp.count_sql(t, pg_temp.clinic_a()), null, pg_temp.owner_a())).state,
   '42501',
   format('%s: el panel no tiene acceso', t)
 )
-from unnest(array['audit_log', 'webhook_events']) t;
+from unnest(pg_temp.backend_only_tables()) t;
 
 -- A signed-in user who belongs to no clinic sees nothing.
 select is(

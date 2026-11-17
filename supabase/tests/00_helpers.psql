@@ -24,12 +24,17 @@ create function pg_temp.business_tables() returns text[] language sql immutable
   as $$ select array[
     'clinics', 'clinic_users', 'providers', 'services', 'schedules', 'schedule_exceptions',
     'patients', 'conversations', 'messages', 'consents', 'appointments', 'escalations',
-    'events', 'templates', 'audit_log', 'webhook_events'
+    'events', 'templates', 'audit_log', 'webhook_events', 'offered_slots', 'team_alerts', 'bot_turns'
   ] $$;
+
+-- Tables only the backend touches: the panel has no access to them.
+create function pg_temp.backend_only_tables() returns text[] language sql immutable
+  as $$ select array['audit_log', 'webhook_events', 'offered_slots', 'team_alerts', 'bot_turns'] $$;
 
 -- Tables the panel reads directly.
 create function pg_temp.panel_tables() returns text[] language sql immutable
-  as $$ select array_remove(array_remove(pg_temp.business_tables(), 'audit_log'), 'webhook_events') $$;
+  as $$ select array(select t from unnest(pg_temp.business_tables()) t
+                     where t <> all (pg_temp.backend_only_tables())) $$;
 
 -- Column that holds the clinic of each row.
 create function pg_temp.clinic_column(p_table text) returns text language sql immutable

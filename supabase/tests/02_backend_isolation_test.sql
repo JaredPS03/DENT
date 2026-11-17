@@ -2,8 +2,8 @@
 begin;
 \ir 00_helpers.psql
 
--- 16 tables x (no clinic + empty string) + 16 x 7 checks - 1 (clinics has no clinic_id to move).
-select plan(143);
+-- 19 tables x (no clinic + empty string) + 19 x 7 checks - 1 (clinics has no clinic_id to move).
+select plan(170);
 
 -- 1. Nothing fixed yet in this session: axon_app sees nothing anywhere (fails closed).
 select is(
@@ -117,6 +117,18 @@ select pg_temp.backend_isolation('audit_log',
 select pg_temp.backend_isolation('webhook_events',
   $$ insert into public.webhook_events (clinic_id, field, kind, dedup_key, payload)
      values ('b0000000-0000-4000-8000-000000000001', 'messages', 'other', 'other:intruso', '{}') $$);
+select pg_temp.backend_isolation('offered_slots',
+  $$ insert into public.offered_slots (clinic_id, conversation_id, service_id, provider_id, slot_key, starts_at, label)
+     values ('b0000000-0000-4000-8000-000000000001', 'b7000000-0000-4000-8000-000000000001',
+             'b3000000-0000-4000-8000-000000000001', 'b2000000-0000-4000-8000-000000000001',
+             'qrst2345', now() + interval '3 days', 'Lun 9:00 am') $$);
+select pg_temp.backend_isolation('team_alerts',
+  $$ insert into public.team_alerts (clinic_id, escalation_id, user_id)
+     values ('b0000000-0000-4000-8000-000000000001', 'bb000000-0000-4000-8000-000000000001',
+             'b1000000-0000-4000-8000-000000000002') $$);
+select pg_temp.backend_isolation('bot_turns',
+  $$ insert into public.bot_turns (clinic_id, conversation_id, prompt_version, outcome, latency_ms)
+     values ('b0000000-0000-4000-8000-000000000001', 'b7000000-0000-4000-8000-000000000001', '1.0', 'fallback', 10) $$);
 
 select * from finish();
 rollback;

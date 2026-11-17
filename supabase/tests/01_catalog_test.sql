@@ -116,7 +116,7 @@ select set_eq(
      where relnamespace = 'public'::regnamespace and relkind = 'r'
        and has_table_privilege('authenticated', oid, 'SELECT') $$,
   $$ select unnest(pg_temp.panel_tables()) $$,
-  'authenticated solo lee las tablas del panel (ni audit_log ni webhook_events)'
+  'authenticated solo lee las tablas del panel (ni audit_log, ni webhook_events, ni las del bot)'
 );
 select is_empty(
   $$ select p.oid::regprocedure from pg_proc p
