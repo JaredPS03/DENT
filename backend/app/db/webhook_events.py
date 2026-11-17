@@ -6,12 +6,13 @@ from uuid import UUID
 from psycopg import AsyncConnection
 from psycopg.types.json import Jsonb
 
+from app.db import claims
 from app.db.connection import Database
 from app.jobs.queue import QUEUE, EventJob
 from app.whatsapp.payloads import WebhookItem
 
 # Items the worker processes; the rest ('other') are only a trace.
-_QUEUED_KINDS = frozenset({"message", "status", "message_echo"})
+_QUEUED_KINDS = frozenset({"message", "status", "message_echo", "account"})
 
 
 async def clinic_for_phone_number(db: Database, phone_number_id: str) -> UUID | None:
@@ -20,6 +21,12 @@ async def clinic_for_phone_number(db: Database, phone_number_id: str) -> UUID | 
         cursor = await conn.execute("select private.clinic_for_phone_number(%s)", (phone_number_id,))
         row = await cursor.fetchone()
     return row[0] if row else None
+
+
+async def clinics_for_waba(db: Database, waba_id: str) -> list[UUID]:
+    """Clinics of Meta's WhatsApp Business Account id, for notices about the account."""
+    async with db.unscoped_transaction() as conn:
+        return await claims.clinics_for_waba(conn, waba_id)
 
 
 async def insert_webhook_items(conn: AsyncConnection, clinic_id: UUID, items: Iterable[WebhookItem]) -> int:

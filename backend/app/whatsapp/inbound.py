@@ -48,6 +48,11 @@ class _Reply(_Model):
     title: str | None = None
 
 
+class _Context(_Model):
+    # Meta's id of the message the patient answered: for a tap on a template button, the template.
+    id: str | None = None
+
+
 class _Interactive(_Model):
     type: str | None = None
     button_reply: _Reply | None = None
@@ -67,6 +72,7 @@ class _Message(_Model):
     document: _Media | None = None
     button: _Button | None = None
     interactive: _Interactive | None = None
+    context: _Context | None = None
 
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
@@ -121,6 +127,9 @@ class InboundMessage:
     media_mime_type: str | None
     # Messages sent in a WhatsApp group the business belongs to: not a patient's chat.
     in_group: bool
+    # The message this one answers (wamid). A template button comes back with its label only, so
+    # this is what ties the tap to its reminder.
+    context_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +173,7 @@ def read_message(payload: dict[str, Any], received_at: datetime) -> InboundMessa
         media_id=media.id if media and media.id and media.id.isascii() and media.id.isdigit() else None,
         media_mime_type=media.mime_type if media else None,
         in_group=message.group_id is not None,
+        context_id=_bounded(message.context.id) if message.context else None,
     )
 
 

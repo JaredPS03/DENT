@@ -1,7 +1,7 @@
 """The agenda behind one interface, so the bot and the panel never care where it lives.
 
 Phase 1 has Axon's own agenda in Postgres (AxonAgenda). Google Calendar and Dentalink arrive in
-Phase 2 as other implementations of the same four operations.
+Phase 2 as other implementations of the same operations.
 """
 
 from dataclasses import dataclass
@@ -84,7 +84,9 @@ class AgendaConnector(Protocol):
 
     async def create(self, clinic_id: UUID, booking: Booking, *, actor: Actor) -> Appointment: ...
 
-    async def move(
+    # `source` says where a change came from, for the monthly report ("reminder": a button of
+    # recordatorio_cita); it goes to the event, never personal data.
+    async def move(  # noqa: PLR0913 - the change and where it came from
         self,
         clinic_id: UUID,
         appointment_id: UUID,
@@ -92,8 +94,19 @@ class AgendaConnector(Protocol):
         *,
         actor: Actor,
         provider_id: UUID | None = None,
+        source: str | None = None,
+    ) -> Appointment: ...
+
+    async def confirm(
+        self, clinic_id: UUID, appointment_id: UUID, *, actor: Actor, source: str | None = None
     ) -> Appointment: ...
 
     async def cancel(
-        self, clinic_id: UUID, appointment_id: UUID, *, actor: Actor, reason: str | None = None
+        self,
+        clinic_id: UUID,
+        appointment_id: UUID,
+        *,
+        actor: Actor,
+        reason: str | None = None,
+        source: str | None = None,
     ) -> Appointment: ...

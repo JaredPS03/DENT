@@ -33,6 +33,7 @@ from app.bot.costs import estimate_microusd
 from app.bot.fixed import Voice, patient_label
 from app.bot.history import build_messages
 from app.bot.prompt import PatientContext, system_blocks
+from app.bot.reminder_taps import handle_taps
 from app.bot.reply import (
     CONSENT_DECLINE_ID,
     ConsentRequest,
@@ -134,6 +135,23 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915 - the steps of 
             erase_later=erase_later,
             latency_ms=round((time.monotonic() - started) * 1000),
         )
+
+    # Buttons of the reminder: code, before the AI and the consent gate (they only touch the
+    # appointment). While the team has the chat or an urgency is answered, only the appointment
+    # changes and nothing is written to the patient.
+    taps = await handle_taps(
+        ctx,
+        clinic_id=clinic_id,
+        conversation_id=conversation_id,
+        batch=batch,
+        now=now,
+        voice=voice,
+        tz=clinic.tz,
+        answering=bot_on and signal is None,
+    )
+    if taps is not None and taps.only_taps and taps.reply is not None:
+        tapped = taps.reply
+        return await finish(BotReply(tapped.content, dict(tapped.payload), None, tapped.slot_keys), None)
 
     if not bot_on:
         alerted = False

@@ -1,6 +1,7 @@
-"""Processing of one stored webhook item: a patient's message, a delivery status or a coexistence
-echo. Everything happens in one transaction with no outside calls, and the item is marked as
-processed in it, so a job read twice changes nothing the second time."""
+"""Processing of one stored webhook item: a patient's message, a delivery status, a coexistence
+echo or a notice about the WhatsApp Business Account. Everything happens in one transaction with
+no outside calls, and the item is marked as processed in it, so a job read twice changes nothing
+the second time."""
 
 import logging
 from datetime import datetime
@@ -11,8 +12,17 @@ from psycopg import AsyncConnection
 
 from app.core.logs import mask_message_id
 from app.db import conversations as db
-from app.jobs.queue import ConversationJob, EventJob, enqueue
+from app.db import template_catalog
+from app.jobs import ops_alerts
+from app.jobs.queue import ConversationJob, EventJob, OpsAlertKind, enqueue
 from app.jobs.timing import BURST_QUIET
+from app.whatsapp.account import (
+    QualityNotice,
+    TemplateCategoryNotice,
+    TemplateStatusNotice,
+    read_account_notice,
+    same_phone,
+)
 from app.whatsapp.inbound import (
     EchoMessage,
     InboundMessage,
@@ -37,25 +47,42 @@ async def handle_event(ctx: WorkerContext, job: EventJob) -> None:
     async with ctx.db.clinic_transaction(job.clinic_id) as conn:
         cursor = await conn.execute(
             """
-            select kind, payload, processed_at, received_at from public.webhook_events
+            select kind, field, payload, processed_at, received_at from public.webhook_events
             where id = %s for update
             """,
             (job.event_id,),
         )
         row = await cursor.fetchone()
-        if row is None or row[2] is not None:
+        if row is None or row[3] is not None:
             return
-        kind, payload, _, received_at = row
+        kind, field, payload, _, received_at = row
+        alert: OpsAlertKind | None = None
         if payload is not None:
-            await _process(conn, job.clinic_id, kind, payload, received_at)
+            alert = await _process(
+                conn,
+                clinic_id=job.clinic_id,
+                kind=kind,
+                field=field,
+                payload=payload,
+                received_at=received_at,
+            )
+        if alert is not None:
+            # Before the item counts as processed: a retry finds the alert already claimed this hour.
+            await ops_alerts.raise_alert(ctx.db, alert, job.clinic_id, 1, ctx.clock())
         await conn.execute(
             "update public.webhook_events set processed_at = now() where id = %s", (job.event_id,)
         )
 
 
-async def _process(
-    conn: AsyncConnection, clinic_id: UUID, kind: str, payload: dict[str, Any], received_at: datetime
-) -> None:
+async def _process(  # noqa: PLR0913 - the stored item's columns
+    conn: AsyncConnection,
+    *,
+    clinic_id: UUID,
+    kind: str,
+    field: str,
+    payload: dict[str, Any],
+    received_at: datetime,
+) -> OpsAlertKind | None:
     try:
         match kind:
             case "message":
@@ -64,9 +91,34 @@ async def _process(
                 await _delivery_status(conn, read_status(payload, received_at))
             case "message_echo":
                 await _echo(conn, clinic_id, read_echo(payload, received_at))
+            case "account":
+                return await _account_notice(conn, clinic_id, field, payload)
     except UnreadableItemError as exc:
         # The stored item will not change by retrying: the dead-letter queue keeps it for a person.
         raise PermanentJobError(str(exc)) from None
+    return None
+
+
+async def _account_notice(
+    conn: AsyncConnection, clinic_id: UUID, field: str, payload: dict[str, Any]
+) -> OpsAlertKind | None:
+    """Meta's notice about the clinic's WhatsApp Business Account: keeps the template catalog in
+    sync and says whether Jared must hear of it."""
+    notice = read_account_notice(field, payload)
+    if isinstance(notice, TemplateStatusNotice):
+        await template_catalog.apply_status(conn, clinic_id, notice)
+    elif isinstance(notice, TemplateCategoryNotice):
+        await template_catalog.apply_category(conn, notice)
+    elif isinstance(notice, QualityNotice) and not same_phone(
+        notice.display_phone, await template_catalog.clinic_display_phone(conn)
+    ):
+        return None  # another number of the same account
+    alert = notice.alert if notice is not None else None
+    logger.info(
+        "whatsapp.account_notice",
+        extra={"field": field, "event": getattr(notice, "event", None), "alert": alert},
+    )
+    return alert
 
 
 async def _patient_message(conn: AsyncConnection, clinic_id: UUID, message: InboundMessage) -> None:

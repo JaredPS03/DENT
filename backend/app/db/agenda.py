@@ -189,6 +189,29 @@ async def set_status(
     return _appointment(await cursor.fetchone())
 
 
+async def void_stale_reminders(conn: AsyncConnection, appointment_id: UUID) -> int:
+    """Run right after a cancellation or a move, in its transaction: a reminder still waiting in the
+    outbox for a time the appointment no longer has is voided and never goes out. One already on its
+    way to Meta is not touched (it may have left)."""
+    cursor = await conn.execute(
+        """
+        with voided as (
+          update public.appointment_reminders r set status = 'voided'
+          from public.appointments a, public.messages m
+          where r.appointment_id = %s and r.status = 'queued'
+            and a.id = r.appointment_id
+            and (a.status not in ('pending', 'confirmed') or a.starts_at <> r.starts_at)
+            and m.id = r.message_id and m.delivery_status = 'pending' and m.send_started_at is null
+          returning r.message_id
+        )
+        update public.messages set delivery_status = 'failed'
+        where id in (select message_id from voided)
+        """,
+        (appointment_id,),
+    )
+    return cursor.rowcount
+
+
 async def insert_event(  # noqa: PLR0913 - one value per column
     conn: AsyncConnection,
     *,

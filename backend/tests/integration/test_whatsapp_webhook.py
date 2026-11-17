@@ -415,3 +415,54 @@ def test_a_silent_database_gets_a_503_on_time_so_meta_retries(
     # Meta retries later, against a database that answers, and the event is stored.
     assert _post(client, payload) == 200
     assert len(_events(database_url, CLINIC_A, wamid)) == 1
+
+
+# Notices about the account (milestone 1D) --------------------------------------------------------
+
+
+def test_a_signed_notice_about_a_clinic_account_is_stored_for_that_clinic_only(
+    client: TestClient, database_url: str
+) -> None:
+    """Template status and the like come under the WABA's id: they reach every clinic of that
+    account and no other, with their content (it carries no patient data)."""
+    name = f"plantilla_{uuid4().hex[:8]}"
+    value = {
+        "event": "APPROVED",
+        "message_template_id": 1,
+        "message_template_name": name,
+        "message_template_language": "es_MX",
+        "reason": None,
+    }
+    payload = webhook_payload({"field": "message_template_status_update", "value": value})
+
+    assert _post(client, payload) == 200
+    assert _post(client, payload) == 200  # a retry from Meta stores nothing new
+
+    sql = (
+        "select field, kind, payload from public.webhook_events"
+        " where kind = 'account' and payload->>'message_template_name' = %s"
+    )
+    assert rows_as_clinic(database_url, CLINIC_A, sql, (name,)) == [
+        ("message_template_status_update", "account", value)
+    ]
+    assert rows_as_clinic(database_url, CLINIC_B, sql, (name,)) == []
+
+
+def test_a_notice_about_an_unknown_account_is_dropped(client: TestClient, database_url: str) -> None:
+    name = f"plantilla_{uuid4().hex[:8]}"
+    payload = webhook_payload(
+        {
+            "field": "message_template_status_update",
+            "value": {
+                "event": "APPROVED",
+                "message_template_name": name,
+                "message_template_language": "es_MX",
+            },
+        },
+        waba_id="999999999999999",
+    )
+
+    assert _post(client, payload) == 200
+    sql = "select count(*) from public.webhook_events where payload->>'message_template_name' = %s"
+    for clinic_id in (CLINIC_A, CLINIC_B):
+        assert rows_as_clinic(database_url, clinic_id, sql, (name,)) == [(0,)]

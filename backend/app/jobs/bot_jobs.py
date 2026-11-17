@@ -9,8 +9,8 @@ from app.db import bot as data
 from app.db.conversations import database_now
 from app.db.media_store import MediaStoreError
 from app.jobs.context import WorkerContext
+from app.jobs.errors import RetryLaterError
 from app.jobs.queue import EraseUnconsentedJob, TeamAlertJob, enqueue, erase_scheduled
-from app.jobs.turns import RetryLaterError
 from app.whatsapp import outbound
 from app.whatsapp.client import (
     RECIPIENT_NOT_ALLOWED_CODE,

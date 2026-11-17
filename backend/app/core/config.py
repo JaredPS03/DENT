@@ -87,11 +87,20 @@ class Settings(BaseSettings):
     # Axon's own WhatsApp number (phone_number_id), which alerts the clinic's team with the
     # template alerta_equipo. Without it, escalations only reach the panel.
     axon_phone_number_id: str | None = Field(default=None, pattern=r"^[0-9]{5,32}$")
+    # The WhatsApp Business Account of Axon's own number: Meta's notices about its templates
+    # (alerta_equipo, alerta_axon) and its quality arrive by this id (milestone 1D).
+    axon_waba_id: str | None = Field(default=None, pattern=r"^[0-9]{5,32}$")
+    # Jared's phone (E.164) for operation alerts (template alerta_axon, from Axon's number). Every
+    # alert also goes to Sentry, the backup for when Meta or this number is the one failing.
+    ops_alert_phone: str | None = Field(default=None, pattern=r"^\+[1-9][0-9]{7,14}$")
 
     # Voice notes to text (OpenAI gpt-transcribe, which does not train on the audio nor keep it;
     # decision 006). Without a key, audios are stored but not transcribed.
     transcription_api_key: SecretStr | None = None
     transcription_model: str = Field(default="gpt-transcribe", pattern=r"^[a-z0-9][a-z0-9.-]{0,63}$")
+    # Voice notes a clinic gets transcribed in 24 h, across all its chats (each one is paid). Past
+    # it, a voice note goes to the team unheard, like one that could not be transcribed.
+    transcription_daily_cap_per_clinic: int = Field(default=300, ge=0, le=100_000)
 
     # Supabase Storage through its S3 protocol, for the private bucket of audios and photos. These
     # keys reach Storage only, not the database (decision 006). Locally, `pnpm supabase status`
@@ -166,6 +175,8 @@ class Settings(BaseSettings):
         "transcription_api_key",
         "anthropic_api_key",
         "axon_phone_number_id",
+        "axon_waba_id",
+        "ops_alert_phone",
         "storage_s3_endpoint",
         "storage_s3_access_key_id",
         "storage_s3_secret_access_key",

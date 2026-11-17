@@ -1,4 +1,4 @@
-# Probar el bot con el número de prueba (hito 1C)
+# Probar el bot con el número de prueba (hitos 1C y 1D)
 
 El bot contesta como asistente virtual del consultorio de prueba A (Clínica Dental Sonrisa, datos ficticios del seed):
 - pide el aviso de privacidad;
@@ -79,6 +79,44 @@ Desde tu celular, escríbele al número de prueba:
 
 Como evidencia guarda solo el final de los ids, nunca tu número.
 
+## 5. El recordatorio y sus botones (hito 1D)
+
+Antes, en Meta, da de alta en el número de prueba la plantilla `recordatorio_cita` con el texto de la especificación, en español de México (`es_MX`) y con tres respuestas rápidas: **Confirmo**, **Cambiar** y **Cancelar**, escritas así. El worker la busca aprobada y como utilidad; el seed ya la marca así en el consultorio A.
+
+1. **Agenda una cita** con el bot para cualquier día.
+2. **Tráela a 24 h** para no esperar. En el SQL Editor corre las dos sentencias en este orden (la segunda va aparte porque mover la cita vuelve a marcar cuándo se fijó su hora):
+
+   ```sql
+   update public.appointments
+   set starts_at = date_trunc('minute', now()) + interval '23 hours 50 minutes',
+       ends_at = date_trunc('minute', now()) + interval '24 hours 35 minutes'
+   where id = (select id from public.appointments
+               where clinic_id = 'a0000000-0000-4000-8000-000000000001' and status in ('pending', 'confirmed')
+               order by created_at desc limit 1);
+
+   update public.appointments set time_set_at = now() - interval '2 days'
+   where id = (select id from public.appointments
+               where clinic_id = 'a0000000-0000-4000-8000-000000000001' and status in ('pending', 'confirmed')
+               order by created_at desc limit 1);
+   ```
+
+3. **Espera hasta 15 minutos** con el worker corriendo: te llega el recordatorio.
+4. **Toca un botón:**
+   - **Confirmo:** la cita queda confirmada y el bot te lo dice.
+   - **Cambiar:** te ofrece hasta tres horarios; toca uno y la cita se mueve.
+   - **Cancelar:** la cita se cancela y el bot te ofrece otra fecha.
+5. **Lo que quedó registrado:**
+
+   ```sql
+   select type, metadata, occurred_at from public.events
+   where clinic_id = 'a0000000-0000-4000-8000-000000000001'
+   order by occurred_at desc limit 5;
+   ```
+
+   Cada cambio hecho desde el recordatorio lleva `{"source": "reminder"}`.
+
+Para recibir tú las alertas de operación, pon `OPS_ALERT_PHONE` con tu número, que también debe estar en `WHATSAPP_ALLOWED_TEST_NUMBERS`, y da de alta `alerta_axon` en el número de Axon.
+
 ## Si algo falla
 
 | Síntoma | Qué revisar |
@@ -90,3 +128,5 @@ Como evidencia guarda solo el final de los ids, nunca tu número.
 | `whatsapp.send_refused` con `recipient_not_allowed` | Tu número no está en `WHATSAPP_ALLOWED_TEST_NUMBERS`, o no está en formato +52… |
 | `error_code` 131030 | En Meta, tu celular no está en la lista de destinatarios del número de prueba. |
 | `error_code` 190 | El token de acceso venció: genera otro. |
+| No llega el recordatorio | En el log del worker, `reminders.queued` dice cuántos salieron. Si dice `without_template`, la plantilla no está aprobada como utilidad en `templates`. Si dice `too_late`, la cita ya es hoy. |
+| Un botón del recordatorio no hace nada | `reminders.tap_without_reminder`: la etiqueta del botón en Meta no es exactamente Confirmo, Cambiar o Cancelar. |

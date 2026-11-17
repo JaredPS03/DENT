@@ -21,8 +21,10 @@ from app.bot.orchestrator import take_turn
 from app.bot.transcription import TranscriptionFailedError, TranscriptionUnavailableError
 from app.core.config import Settings
 from app.db import conversations as db
+from app.db import reminders as reminders_db
 from app.db.media_store import MediaStoreError, media_path
 from app.jobs.context import LeaseLostError, WorkerContext
+from app.jobs.errors import RetryLaterError
 from app.jobs.queue import ConversationJob, ExpireHoldJob, enqueue, turn_scheduled_from
 from app.jobs.timing import burst_ready
 from app.whatsapp.client import (
@@ -58,14 +60,6 @@ MAX_TRANSCRIPTIONS_PER_DAY = 20
 MAX_TRANSCRIBED_BYTES = 2 * 1024 * 1024
 
 KeepAlive = Callable[[], Awaitable[None]]
-
-
-class RetryLaterError(Exception):
-    """Something outside (Meta, Storage, the transcription) failed for now."""
-
-    def __init__(self, reason: str, retry_after: float | None = None) -> None:
-        super().__init__(reason)
-        self.retry_after = retry_after
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +156,7 @@ async def _answer(ctx: WorkerContext, lease: _Lease, renew: KeepAlive, *, final_
     async with ctx.db.clinic_transaction(lease.clinic_id) as conn:
         batch, now = await db.unhandled_inbound(conn, lease.conversation_id, limit=MAX_BATCH)
         transcribed_today = await db.transcriptions_today(conn, lease.conversation_id) if batch else 0
+        clinic_transcribed_today = await db.transcriptions_today_in_clinic(conn) if batch else 0
     if not batch:
         return False
     arrivals = [message.created_at for message in batch]
@@ -169,7 +164,13 @@ async def _answer(ctx: WorkerContext, lease: _Lease, renew: KeepAlive, *, final_
         # The patient is still typing: _release schedules the turn for when the burst is over.
         return False
 
-    transcriptions_left = min(MAX_TRANSCRIPTIONS_PER_TURN, MAX_TRANSCRIPTIONS_PER_DAY - transcribed_today)
+    clinic_left = ctx.settings.transcription_daily_cap_per_clinic - clinic_transcribed_today
+    if clinic_left <= 0 and any(message.type == "audio" for message in batch):
+        # Past the clinic's daily cap a voice note goes to the team unheard (it might be urgent).
+        logger.warning("whatsapp.clinic_transcription_cap_reached", extra={"clinic_id": str(lease.clinic_id)})
+    transcriptions_left = min(
+        MAX_TRANSCRIPTIONS_PER_TURN, MAX_TRANSCRIPTIONS_PER_DAY - transcribed_today, clinic_left
+    )
     prepared: list[db.PendingMessage] = []
     for message in batch:
         ready = await _prepare_media(
@@ -306,6 +307,11 @@ async def _flush_outbox(ctx: WorkerContext, lease: _Lease, renew: KeepAlive) -> 
             item = await db.next_outbound(conn, lease.conversation_id)
             if item is None:
                 return
+            if item.type == "template" and await reminders_db.void_if_stale(conn, item.id):
+                # A reminder whose appointment was cancelled or moved after it was queued.
+                await db.mark_failed(conn, item.id, None)
+                logger.info("reminders.voided_before_sending", extra={"message_id": str(item.id)})
+                continue
             refusal = _refusal(ctx.settings, item)
             if refusal is not None:
                 code, reason = refusal

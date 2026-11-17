@@ -1,6 +1,11 @@
-"""When the worker acts: the burst of patient messages and the retry backoff."""
+"""When the worker acts: the burst of patient messages, the retry backoff and the slots of the
+scheduled runs."""
 
-from datetime import datetime, timedelta
+import logging
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+logger = logging.getLogger(__name__)
 
 # Patients often send several short messages in a row. The bot answers once they have been quiet
 # this long, in a single message: it reads better and costs one message instead of several.
@@ -31,3 +36,24 @@ def backoff_seconds(attempt: int, jitter: float) -> float:
     that failed together, such as during a Meta outage."""
     delay: float = min(_BACKOFF_BASE_SECONDS * 2.0 ** (attempt - 1), _BACKOFF_CAP_SECONDS)
     return delay * (1 + _JITTER * jitter) if delay < _BACKOFF_CAP_SECONDS else delay
+
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+DEFAULT_TIMEZONE = "America/Mexico_City"
+
+
+def slot_of(moment: datetime, every: timedelta) -> datetime:
+    """The start of the run of `every` that `moment` falls in, counted from the Unix epoch in UTC:
+    every 15 minutes gives :00, :15, :30 and :45 of each hour."""
+    seconds = int(every.total_seconds())
+    elapsed = int((moment - _EPOCH).total_seconds())
+    return _EPOCH + timedelta(seconds=elapsed - elapsed % seconds)
+
+
+def clinic_zone(name: str) -> ZoneInfo:
+    """The clinic's time zone, never the server's; Mexico City's if what is stored is unknown."""
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.error("jobs.unknown_timezone")  # noqa: TRY400 - nothing else to log
+        return ZoneInfo(DEFAULT_TIMEZONE)

@@ -20,8 +20,9 @@ from app.api.session import SessionDep
 from app.db import conversations as db
 from app.dependencies import get_db
 from app.jobs.queue import ConversationJob, ExpireHoldJob, enqueue
-from app.whatsapp import outbound
+from app.whatsapp import outbound, templates
 from app.whatsapp.outbound import MAX_TEXT, InvalidOutboundError
+from app.whatsapp.templates import greeting_name
 from app.whatsapp.window import window_is_open
 
 logger = logging.getLogger(__name__)
@@ -29,10 +30,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/conversaciones", tags=["conversaciones"])
 
 # Asks the patient to come back once the 24 h window closed (spec, WhatsApp templates).
-REOPEN_TEMPLATE = "retomar_conversacion"
-# Used as {{1}} when the patient never told their name: "Hola de nuevo, te escribimos de…".
-UNKNOWN_NAME_GREETING = "de nuevo"
-_TITLES = frozenset({"sr", "sra", "srita", "dr", "dra", "don", "doña", "lic", "ing", "mtro", "mtra"})
+REOPEN_TEMPLATE = templates.REOPEN
 # The hold expires a little after 24 h, so the database's clock always agrees it is due.
 HOLD_EXPIRY_DELAY = db.HOLD_TTL + timedelta(minutes=1)
 
@@ -187,16 +185,6 @@ async def _ask_patient_to_come_back(
         idempotency_key=f"reopen:{body.client_message_id}",
     )
     return True
-
-
-def greeting_name(full_name: str | None) -> str:
-    """The first name for "Hola {{1}}": without titles (Sra., Dr.) and without shouting if it was
-    typed in capitals. "de nuevo" when the clinic does not know it yet."""
-    words = [word for word in (full_name or "").split() if word.lower().rstrip(".") not in _TITLES]
-    if not words:
-        return UNKNOWN_NAME_GREETING
-    first = words[0]
-    return first.capitalize() if first.isupper() else first
 
 
 def _unprocessable(detail: str) -> JSONResponse:

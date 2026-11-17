@@ -72,8 +72,43 @@ class EraseUnconsentedJob(_Job):
     conversation_id: UUID
 
 
+ScheduledTask = Literal["reminders", "watchdog", "cleanup"]
+
+
+class ScheduledJob(_Job):
+    """One clinic's share of a scheduled run (milestone 1D): queue the reminders that are due,
+    watch for what nobody attended, or clean up what expired. `slot` is the run it belongs to."""
+
+    kind: Literal["scheduled"] = "scheduled"
+    task: ScheduledTask
+    slot: datetime
+
+
+OpsAlertKind = Literal[
+    "unanswered", "uncertain_sends", "reminder_failed", "template", "quality", "account", "dead_letters"
+]
+
+
+class OpsAlertJob(BaseModel):
+    """An operation alert for Jared (template alerta_axon, from Axon's number). It carries the
+    kind, the clinic (None: Axon itself) and how many cases: never patient data."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["ops_alert"] = "ops_alert"
+    alert: OpsAlertKind
+    clinic_id: UUID | None
+    count: int = Field(ge=1)
+
+
 Job = Annotated[
-    EventJob | ConversationJob | ExpireHoldJob | TeamAlertJob | EraseUnconsentedJob,
+    EventJob
+    | ConversationJob
+    | ExpireHoldJob
+    | TeamAlertJob
+    | EraseUnconsentedJob
+    | ScheduledJob
+    | OpsAlertJob,
     Field(discriminator="kind"),
 ]
 _JOB: TypeAdapter[Job] = TypeAdapter(Job)
@@ -132,6 +167,15 @@ async def erase_scheduled(conn: AsyncConnection, conversation_id: UUID) -> bool:
     )
     row = await cursor.fetchone()
     return bool(row and row[0])
+
+
+async def dead_letters_since(conn: AsyncConnection, since: datetime) -> int:
+    """Jobs that exhausted their retries since `since`: someone has to look at them."""
+    cursor = await conn.execute(
+        "select count(*) from pgmq.q_whatsapp_inbound_dlq where enqueued_at > %s", (since,)
+    )
+    row = await cursor.fetchone()
+    return int(row[0]) if row else 0
 
 
 async def read(db: Database, quantity: int) -> list[QueuedJob]:

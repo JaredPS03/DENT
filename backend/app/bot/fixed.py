@@ -129,3 +129,95 @@ def _to(person: str) -> str:
     if person.startswith("el "):
         return "al " + person.removeprefix("el ")
     return "a " + person
+
+
+# Buttons of recordatorio_cita (milestone 1D). `when` is spoken by the caller: "mañana martes 18
+# de noviembre a las 10:00 am", or "el martes 18 de noviembre a las 10:00 am".
+
+
+def reminder_confirmed(voice: Voice, service: str, when: str) -> str:
+    if voice.formal:
+        return f"¡Gracias! Su cita de {service} queda confirmada para {when}. Le esperamos."
+    return f"¡Gracias! Tu cita de {service} queda confirmada para {when}. Te esperamos."
+
+
+def reminder_cancelled(voice: Voice, service: str, when: str) -> str:
+    of_when = "del " + when.removeprefix("el ") if when.startswith("el ") else "de " + when
+    if voice.formal:
+        return (
+            f"Listo, cancelé su cita de {service} {of_when}. Si quiere otra fecha, escríbame y le "
+            "busco horario."
+        )
+    return (
+        f"Listo, cancelé tu cita de {service} {of_when}. Si quieres otra fecha, escríbeme y te busco horario."
+    )
+
+
+def reminder_options(voice: Voice, service: str) -> str:
+    """Goes with up to three slots as buttons. The appointment is not touched until one is chosen."""
+    if voice.formal:
+        return (
+            f"Claro. Estos horarios están libres para su {service}. Su cita actual sigue en pie hasta "
+            "que elija uno. Si ninguno le acomoda, dígame qué día prefiere."
+        )
+    return (
+        f"Claro. Estos horarios están libres para tu {service}. Tu cita actual sigue en pie hasta que "
+        "elijas uno. Si ninguno te acomoda, dime qué día prefieres."
+    )
+
+
+def reminder_no_options(voice: Voice) -> str:
+    if voice.formal:
+        return (
+            "No encontré horarios libres en los próximos días. Su cita actual sigue en pie. Dígame qué "
+            "día le acomoda y lo busco."
+        )
+    return (
+        "No encontré horarios libres en los próximos días. Tu cita actual sigue en pie. Dime qué día "
+        "te acomoda y lo busco."
+    )
+
+
+def reminder_moved(voice: Voice, service: str, when: str) -> str:
+    if voice.formal:
+        return f"Listo, su cita de {service} quedó para {when}. Le esperamos."
+    return f"Listo, tu cita de {service} quedó para {when}. Te esperamos."
+
+
+def reminder_slot_taken(voice: Voice, *, alternatives: bool) -> str:
+    if alternatives:
+        if voice.formal:
+            return "Ese horario se acaba de ocupar. Estos siguen libres; su cita actual sigue en pie."
+        return "Ese horario se acaba de ocupar. Estos siguen libres; tu cita actual sigue en pie."
+    if voice.formal:
+        return (
+            "Ese horario se acaba de ocupar y su cita actual sigue en pie. Dígame qué día le acomoda "
+            "y lo busco."
+        )
+    return "Ese horario se acaba de ocupar y tu cita actual sigue en pie. Dime qué día te acomoda y lo busco."
+
+
+def reminder_not_moved(voice: Voice) -> str:
+    """The agenda refused the change for another reason (the patient has another appointment then)."""
+    if voice.formal:
+        return "No pude mover su cita a ese horario y sigue en pie. Dígame qué día le acomoda y lo busco."
+    return "No pude mover tu cita a ese horario y sigue en pie. Dime qué día te acomoda y lo busco."
+
+
+def reminder_already_cancelled(voice: Voice) -> str:
+    if voice.formal:
+        return "Esa cita ya está cancelada. Si quiere agendar otra, escríbame y le busco horario."
+    return "Esa cita ya está cancelada. Si quieres agendar otra, escríbeme y te busco horario."
+
+
+def reminder_already_past(voice: Voice) -> str:
+    if voice.formal:
+        return "Esa cita ya pasó. Si quiere agendar otra, escríbame y le busco horario."
+    return "Esa cita ya pasó. Si quieres agendar otra, escríbeme y te busco horario."
+
+
+def reminder_already_moved(voice: Voice, when: str) -> str:
+    """The patient tapped an old reminder: the appointment is now at another time."""
+    if voice.formal:
+        return f"Su cita cambió: ahora es {when}. Si quiere moverla o cancelarla, escríbame."
+    return f"Tu cita cambió: ahora es {when}. Si quieres moverla o cancelarla, escríbeme."

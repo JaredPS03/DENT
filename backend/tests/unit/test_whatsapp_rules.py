@@ -5,7 +5,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.api.conversaciones import greeting_name
 from app.jobs.timing import (
     BURST_MAX_WAIT,
     BURST_QUIET,
@@ -15,6 +14,7 @@ from app.jobs.timing import (
     seconds_until_ready,
 )
 from app.whatsapp.phones import normalize_bsuid, normalize_phone, recipient_fields
+from app.whatsapp.templates import greeting_name
 from app.whatsapp.window import (
     CUSTOMER_SERVICE_WINDOW,
     SEND_MARGIN,

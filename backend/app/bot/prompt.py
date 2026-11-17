@@ -164,6 +164,17 @@ def _clock(moment: time) -> str:
     return f"{hour}:{moment.minute:02d} {'am' if moment.hour < 12 else 'pm'}"
 
 
+def spoken_day(moment: datetime) -> str:
+    """'martes 18 de noviembre'."""
+    return f"{WEEKDAYS[moment.weekday()]} {moment.day} de {MONTHS[moment.month - 1]}"
+
+
+def at_time(moment: time) -> str:
+    """'a las 10:00 am', but 'a la 1:30 pm': in Spanish one o'clock is singular."""
+    article = "a la" if moment.hour % 12 == 1 else "a las"
+    return f"{article} {_clock(moment)}"
+
+
 def _first_name(name: str | None) -> str | None:
     """Only the first name goes to the AI (seguridad.md, "A la IA mándale solo lo necesario"),
     and only if it looks like one: the name may come from the patient's WhatsApp profile."""

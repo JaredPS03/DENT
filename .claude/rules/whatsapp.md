@@ -14,6 +14,7 @@ Confirma en la documentación oficial de Meta los nombres exactos de campos y ev
 - `GET /webhooks/whatsapp`: si `hub.mode` es `subscribe` y `hub.verify_token` coincide, devuelve `hub.challenge`; si no, 403.
 - `POST /webhooks/whatsapp`: valida la firma, guarda el aviso crudo en `webhook_events`, encola solo su id y responde 200 en menos de 1 s.
 - Enruta al consultorio con `private.clinic_for_phone_number(metadata.phone_number_id)`; si no existe, registra y descarta.
+- Los avisos de la cuenta (estado y categoría de plantillas, calidad y límite del número, restricciones) llegan sin `phone_number_id`, bajo el id de la cuenta (`entry[].id`, la WABA): se enrutan con `private.clinics_for_waba`. Los de la WABA de Axon (`AXON_WABA_ID`) son alertas para Jared.
 - Un aviso puede traer varios `entry` y `changes`, incluso de consultorios distintos: sepáralos y enruta cada uno por su cuenta.
 - Maneja texto, audio, imagen, documento, respuestas de botón o lista, botones de plantilla y estados de entrega (`sent`, `delivered`, `read`, `failed`).
 - Deduplica por el id de mensaje de Meta.
@@ -36,6 +37,7 @@ Confirma en la documentación oficial de Meta los nombres exactos de campos y ev
 ## Plantillas
 
 - El catálogo vive en la tabla `templates`, con su estado sincronizado desde los avisos de Meta.
+- El toque de un botón de respuesta rápida de una plantilla llega solo con el texto del botón (`button.payload` y `button.text`): se liga a su mensaje por `context.id`. Si cambias el texto de un botón en Meta, cámbialo también en el código (`REMINDER_BUTTONS`).
 - Marketing solo a pacientes con `marketing_opt_in = true`. El botón "No recibir más" o escribir "BAJA" lo apaga al instante, y se confirma con un mensaje.
 
 ## Calidad del número

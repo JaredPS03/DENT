@@ -5,6 +5,7 @@ Paths are <clinic_id>/<conversation_id>/<message_id>.<ext>: no patient data in f
 """
 
 import asyncio
+from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -38,6 +39,8 @@ class MediaStore(Protocol):
     async def get(self, clinic_id: UUID, path: str) -> bytes: ...
 
     async def delete(self, clinic_id: UUID, path: str) -> None: ...
+
+    async def list_older(self, clinic_id: UUID, before: datetime, limit: int) -> list[str]: ...
 
 
 class S3MediaStore:
@@ -86,3 +89,26 @@ class S3MediaStore:
             await asyncio.to_thread(self._client.delete_object, Bucket=BUCKET, Key=path)
         except (BotoCoreError, ClientError) as exc:
             raise MediaStoreError(type(exc).__name__) from None
+
+    async def list_older(self, clinic_id: UUID, before: datetime, limit: int) -> list[str]:
+        """Paths of the clinic's files stored before `before`, at most `limit`: the daily cleanup
+        deletes those no message points to any more."""
+
+        def collect() -> list[str]:
+            found: list[str] = []
+            paginator = self._client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=BUCKET, Prefix=f"{clinic_id}/"):
+                for item in page.get("Contents", []):
+                    if item["LastModified"] < before:
+                        found.append(item["Key"])
+                        if len(found) >= limit:
+                            return found
+            return found
+
+        try:
+            paths = await asyncio.to_thread(collect)
+        except (BotoCoreError, ClientError) as exc:
+            raise MediaStoreError(type(exc).__name__) from None
+        for path in paths:
+            check_clinic_path(clinic_id, path)
+        return paths

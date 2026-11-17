@@ -2,8 +2,8 @@
 begin;
 \ir 00_helpers.psql
 
--- 19 tables x (no clinic + empty string) + 19 x 7 checks - 1 (clinics has no clinic_id to move).
-select plan(170);
+-- 20 tables x (no clinic + empty string) + 20 x 7 checks - 1 (clinics has no clinic_id to move).
+select plan(179);
 
 -- 1. Nothing fixed yet in this session: axon_app sees nothing anywhere (fails closed).
 select is(
@@ -129,6 +129,9 @@ select pg_temp.backend_isolation('team_alerts',
 select pg_temp.backend_isolation('bot_turns',
   $$ insert into public.bot_turns (clinic_id, conversation_id, prompt_version, outcome, latency_ms)
      values ('b0000000-0000-4000-8000-000000000001', 'b7000000-0000-4000-8000-000000000001', '1.0', 'fallback', 10) $$);
+select pg_temp.backend_isolation('appointment_reminders',
+  $$ insert into public.appointment_reminders (clinic_id, appointment_id, starts_at, status)
+     values ('b0000000-0000-4000-8000-000000000001', 'ba000000-0000-4000-8000-000000000002', now(), 'voided') $$);
 
 select * from finish();
 rollback;

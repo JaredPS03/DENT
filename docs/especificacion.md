@@ -241,7 +241,8 @@ Toda tabla lleva `clinic_id` y una regla de seguridad por fila: un consultorio n
 | `messages` | Cada mensaje | dirección, tipo (texto, audio, imagen, botón), contenido, transcripción, id de Meta, categoría cobrable | 1 |
 | `escalations` | Pases a humano | motivo, prioridad (urgente, normal), resumen, quién lo atendió | 1 |
 | `events` | Hechos para el tablero | tipo (agendada fuera de horario, confirmada, reagendada, reactivada…), cita, fecha, valor en pesos cuando el paciente asiste | 1 |
-| `templates` | Plantillas de Meta | nombre, categoría (utilidad, marketing), idioma, estado de aprobación | 1 |
+| `templates` | Plantillas de Meta | nombre, categoría (utilidad, marketing), idioma, estado de aprobación y su motivo, sincronizados con los avisos de Meta | 1 |
+| `appointment_reminders` | Recordatorio de cada cita | cita, hora que anuncia (una cita movida recibe el suyo para la hora nueva), estado (en cola, anulado, omitido), mensaje | 1 |
 | `audit_log` | Bitácora | quién (usuario o sistema), acción, tabla e id, cambios, fecha | 1 |
 | `webhook_events` | Avisos crudos de Meta, para reprocesar si algo falla | id de Meta, tipo, contenido, recibido, procesado; el contenido se borra a los 7 días de procesado | 1 |
 | `message_usage` | Medidor del tope | mes, mensajes por categoría, costo estimado | 2 |
@@ -299,15 +300,16 @@ El orden importa: la urgencia se revisa antes que el aviso, así que un paciente
 
 ## Plantillas de WhatsApp
 
-Todo mensaje que inicia el consultorio fuera de la ventana de 24 h necesita una plantilla aprobada por Meta; estas 14 cubren las cinco fases, y las cinco de la Fase 1 se envían a aprobar en la Fase 0.
+Todo mensaje que inicia el consultorio fuera de la ventana de 24 h necesita una plantilla aprobada por Meta; estas 15 cubren las cinco fases. Las cinco primeras de la Fase 1 se envían a aprobar en la Fase 0, y `alerta_axon`, que llegó con el hito 1D, antes de pasar a producción.
 
 | Plantilla | Categoría | Texto propuesto | Botones | Fase |
 | --- | --- | --- | --- | --- |
-| `recordatorio_cita` | Utilidad | Hola {{1}}, te recordamos tu cita de {{2}} mañana {{3}} a las {{4}} en {{5}}. | Confirmo · Cambiar · Cancelar | 1 |
+| `recordatorio_cita` | Utilidad | Hola {{1}}, este es el recordatorio de la cita de {{2}} mañana {{3}} a las {{4}} en {{5}}. (Un solo texto para tú y usted; decisión 008.) | Confirmo · Cambiar · Cancelar | 1 |
 | `cita_confirmada` | Utilidad | Tu cita de {{1}} quedó el {{2}} a las {{3}}. Dirección: {{4}}. | Ver ubicación (enlace) | 1 |
 | `cita_movida` | Utilidad | El consultorio movió tu cita de {{1}} al {{2}} a las {{3}}. ¿Te queda bien? | Sí · Elegir otro horario | 1 |
 | `retomar_conversacion` | Utilidad | Hola {{1}}, te escribimos de {{2}} sobre tu mensaje. ¿Seguimos? | Sí, seguimos | 1 |
 | `alerta_equipo` (de Axon al equipo del consultorio) | Utilidad | Hola {{1}}, un paciente de {{2}} necesita al equipo (prioridad {{3}}). Ábrelo desde el botón. | Abrir conversación (enlace) | 1 |
+| `alerta_axon` (de Axon a ti, alertas de operación) | Utilidad | Alerta de Axon: {{1}} en {{2}} ({{3}}). Revisa Sentry para el detalle. | Ninguno | 1 |
 | `resumen_diario` (al dentista) | Utilidad | Mañana tienes {{1}} citas, {{2}} confirmadas. {{3}} pacientes pidieron hablar contigo. | Ver agenda (enlace) | 2 |
 | `reporte_mensual` (de Axon al dentista) | Utilidad | En {{1}}, Axon te recuperó {{2}} citas, unos {{3}} pesos. | Ver detalle (enlace) | 2 |
 | `recall_limpieza` | Marketing | Hola {{1}}, ya pasaron {{2}} meses de tu última limpieza en {{3}}. ¿Te agendo? | Agendar · Más adelante · No recibir más | 3 |
@@ -366,7 +368,7 @@ El panel lee directo de Supabase con seguridad por fila; el backend solo expone 
 | POST | `/webhooks/mercadopago` | Avisos de pago de tu mensualidad y de los anticipos | 2 y 4 |
 | POST | `/api/comprobantes/{id}/aprobar` | Aprobar un comprobante leído de una foto | 4 |
 
-**Tareas programadas** (corren en el worker, no son endpoints públicos): recordatorios cada 15 minutos, resumen diario a las 20:00, medidor de mensajes cada hora, recall y reactivación una vez al día, y reporte mensual el día 1 a las 9:00, todo en hora del centro de México.
+**Tareas programadas** (corren en el worker, no son endpoints públicos): recordatorios cada 15 minutos, vigilancia cada minuto (urgencias sin atender y mensajes sin respuesta), limpieza diaria a las 3:00, resumen diario a las 20:00, medidor de mensajes cada hora, recall y reactivación una vez al día, y reporte mensual el día 1 a las 9:00. Las horas fijas se calculan en la zona de cada consultorio (por defecto, la del centro de México), nunca en la del servidor. Cada turno de una tarea se reclama en la base una sola vez, aunque corran varios workers (decisión 008).
 
 ## Requisitos no funcionales
 
@@ -385,7 +387,7 @@ Son las metas que el sistema cumple sin que nadie las vea; si una falla, el dent
 | Escala | 50 consultorios sin cambiar la arquitectura | Más workers detrás de la misma cola |
 | Costo variable | Menos del 40% de la mensualidad | Medidor de mensajes y topes por plan |
 | Hora | Todo en hora del centro de México, sin horario de verano | Zona `America/Mexico_City` en citas y tareas |
-| Monitoreo | Te enteras antes que el dentista | Alerta a tu WhatsApp si un mensaje lleva 5 min sin respuesta, si falla un recordatorio o si baja la calidad del número |
+| Monitoreo | Te enteras antes que el dentista | Alerta a tu WhatsApp si un mensaje lleva 5 min sin respuesta, si falla un recordatorio o si baja la calidad del número; si el worker deja de dar señal de vida, Sentry te avisa por correo |
 | Pruebas | Nada sale sin probarse | 50 conversaciones simuladas (agendar, audio, urgencia, fuera de tema) antes de cada despliegue |
 
 ## Criterios de aceptación de la Fase 1
@@ -430,7 +432,7 @@ Axon Dental cumple con Meta porque es un bot de un negocio concreto (citas y ate
 - Audios y fotos en almacenamiento privado, con enlaces temporales para verlos.
 - Seguridad por fila en todas las tablas y llaves secretas solo en el servidor.
 - Bitácora de quién vio o cambió qué en el panel.
-- Política de conservación: define con cada dentista cuánto tiempo se guardan los audios y fotos.
+- Política de conservación: define con cada dentista cuánto tiempo se guardan los audios y fotos. Por defecto, 90 días; después se borra el archivo y la transcripción se queda (decisión 008, pendiente de revisión legal).
 
 ## Costos y planes
 
@@ -523,7 +525,7 @@ Estas decisiones completan la especificación para construirla con Claude Code; 
 - **Modelo y datos:** el bot usa `claude-haiku-5-5` con herramientas en modo estricto (`strict: true`). En la API de Claude, el contenido de las conversaciones no se conserva por defecto y no se usa para entrenar sin permiso expreso; Fable 5.1 y Mythos 5.1 exigen 30 días de retención, así que no se usan con datos de pacientes. Nunca se ponen datos de pacientes dentro de los esquemas de las herramientas ([retención de datos](https://platform.claude.com/docs/en/manage-claude/api-and-data-retention), [herramientas estrictas](https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use)).
 - **Tope de mensajes:** al llegar al tope nunca se deja de contestar a un paciente ni de mandar recordatorios; el excedente se cobra. Lo que se detiene son las campañas de marketing.
 - **Mensajes del dentista desde su app:** con coexistencia, si el consultorio contesta desde el teléfono, el bot se pausa en esa conversación por un tiempo configurable.
-- **Lecturas sin consultorio fijado:** solo tres funciones `security definer` que devuelven ids: `private.clinic_for_phone_number`, para enrutar el webhook; `private.active_clinic_ids`, para las tareas programadas, y `private.clinic_memberships`, para la sesión del panel (consultorio y rol; decisión 005). Todo lo demás se lee con el consultorio fijado.
+- **Lecturas sin consultorio fijado:** solo cuatro funciones `security definer` que devuelven ids: `private.clinic_for_phone_number`, para enrutar el webhook; `private.clinics_for_waba`, para los avisos de Meta sobre la cuenta (decisión 008); `private.active_clinic_ids`, para las tareas programadas, y `private.clinic_memberships`, para la sesión del panel (consultorio y rol; decisión 005). La única escritura sin consultorio es `private.claim`, que marca un turno del programador o una alerta como ya tomados y solo guarda claves con ids. Todo lo demás se lee con el consultorio fijado.
 - **Avisos crudos de Meta:** se guardan en `webhook_events` para poder reprocesarlos; la cola solo lleva ids, nunca el contenido de los mensajes.
 - **Urgencia con texto fijo:** si la IA escala con prioridad urgente, el código manda el mismo mensaje fijo de urgencia que el filtro, revisado por el dentista.
 - **Horarios validados en código:** la IA ofrece horarios por el id que devolvió `buscar_disponibilidad`, y el código rechaza cualquier id que no haya salido de ahí en esa conversación.

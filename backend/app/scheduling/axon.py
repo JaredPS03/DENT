@@ -130,7 +130,7 @@ class AxonAgenda:
             )
             raise SlotUnavailableError(alternatives) from None
 
-    async def move(
+    async def move(  # noqa: PLR0913 - the change and where it came from
         self,
         clinic_id: UUID,
         appointment_id: UUID,
@@ -138,6 +138,7 @@ class AxonAgenda:
         *,
         actor: Actor,
         provider_id: UUID | None = None,
+        source: str | None = None,
     ) -> Appointment:
         now = self._clock()
         service_id: UUID | None = None
@@ -164,12 +165,14 @@ class AxonAgenda:
                 moved = await sql.reschedule(
                     conn, current.id, provider_id=provider, starts_at=starts_at, ends_at=starts_at + duration
                 )
+                await sql.void_stale_reminders(conn, moved.id)
                 await sql.insert_event(
                     conn,
                     clinic_id=clinic_id,
                     event_type="appointment_rescheduled",
                     appointment_id=moved.id,
                     occurred_at=now,
+                    metadata=_origin(source),
                 )
                 await sql.insert_audit(
                     conn,
@@ -186,19 +189,56 @@ class AxonAgenda:
             alternatives = await self._alternatives(clinic_id, service_id, starts_at, _lead_time(actor), now)
             raise SlotUnavailableError(alternatives) from None
 
+    async def confirm(
+        self, clinic_id: UUID, appointment_id: UUID, *, actor: Actor, source: str | None = None
+    ) -> Appointment:
+        """Pending to confirmed. An appointment already confirmed stays as it is, and nothing is
+        recorded twice (a button tapped twice)."""
+        now = self._clock()
+        async with self._db.clinic_transaction(clinic_id) as conn:
+            current = await _changeable(conn, appointment_id)
+            if current.status == "confirmed":
+                return current
+            confirmed = await sql.set_status(conn, current.id, "confirmed")
+            await sql.insert_event(
+                conn,
+                clinic_id=clinic_id,
+                event_type="appointment_confirmed",
+                appointment_id=confirmed.id,
+                occurred_at=now,
+                metadata=_origin(source),
+            )
+            await sql.insert_audit(
+                conn,
+                clinic_id=clinic_id,
+                actor=actor,
+                action="appointment.confirm",
+                record_id=confirmed.id,
+                changes={"status": [current.status, "confirmed"]},
+            )
+            return confirmed
+
     async def cancel(
-        self, clinic_id: UUID, appointment_id: UUID, *, actor: Actor, reason: str | None = None
+        self,
+        clinic_id: UUID,
+        appointment_id: UUID,
+        *,
+        actor: Actor,
+        reason: str | None = None,
+        source: str | None = None,
     ) -> Appointment:
         now = self._clock()
         async with self._db.clinic_transaction(clinic_id) as conn:
             current = await _changeable(conn, appointment_id)
             cancelled = await sql.set_status(conn, current.id, "cancelled", cancelled_at=now, reason=reason)
+            await sql.void_stale_reminders(conn, cancelled.id)
             await sql.insert_event(
                 conn,
                 clinic_id=clinic_id,
                 event_type="appointment_cancelled",
                 appointment_id=cancelled.id,
                 occurred_at=now,
+                metadata=_origin(source),
             )
             await sql.insert_audit(
                 conn,
@@ -347,6 +387,11 @@ async def _changeable(conn: AsyncConnection, appointment_id: UUID) -> Appointmen
     if current.status not in _ACTIVE:
         raise InvalidChangeError("Solo se puede cambiar una cita pendiente o confirmada.")
     return current
+
+
+def _origin(source: str | None) -> dict[str, str] | None:
+    """Where a change came from, for the monthly report: {"source": "reminder"}."""
+    return {"source": source} if source else None
 
 
 def _snapshot(appointment: Appointment) -> dict[str, str]:

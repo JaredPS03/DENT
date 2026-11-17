@@ -189,6 +189,9 @@ insert into public.messages (
   ('a8000000-0000-4000-8000-000000000006', 'a0000000-0000-4000-8000-000000000001', 'a7000000-0000-4000-8000-000000000002',
    'outbound', 'human', 'text', 'Hola Carlos, te llamamos en un momento.', null,
    'wamid.SEED.A.0006', 'service', 'sent', null, now() - interval '30 minutes'),
+  ('a8000000-0000-4000-8000-000000000007', 'a0000000-0000-4000-8000-000000000001', 'a7000000-0000-4000-8000-000000000001',
+   'outbound', 'system', 'template', 'Recordatorio de cita', null,
+   'wamid.SEED.A.0007', 'utility', 'delivered', null, now() - interval '1 hour'),
   ('b8000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000001', 'b7000000-0000-4000-8000-000000000001',
    'inbound', 'patient', 'text', 'Buen día, ¿tienen horario el sábado?', null,
    'wamid.SEED.B.0001', null, null, null, now() - interval '3 days 1 minute'),
@@ -230,6 +233,17 @@ insert into public.appointments (
    'b3000000-0000-4000-8000-000000000002', 'b2000000-0000-4000-8000-000000000001',
    pg_temp.local_ts(3, '12:00'), pg_temp.local_ts(3, '12:30'), 'cancelled', 'human',
    now() - interval '1 day', 'El paciente pidió cancelar');
+
+-- Reminders: A's confirmed appointment got its template; B's next one came too late for one.
+insert into public.appointment_reminders (id, clinic_id, appointment_id, starts_at, status, skip_reason, message_id)
+select r.id, a.clinic_id, a.id, a.starts_at, r.status, r.skip_reason, r.message_id
+from (values
+  ('ad100000-0000-4000-8000-000000000001'::uuid, 'aa000000-0000-4000-8000-000000000001'::uuid, 'queued', null,
+   'a8000000-0000-4000-8000-000000000007'::uuid),
+  ('bd100000-0000-4000-8000-000000000001'::uuid, 'ba000000-0000-4000-8000-000000000001'::uuid, 'skipped', 'too_late',
+   null)
+) as r (id, appointment_id, status, skip_reason, message_id)
+join public.appointments a on a.id = r.appointment_id;
 
 -- Escalations, events, templates, audit log and raw webhook items --------------------------------
 

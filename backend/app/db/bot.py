@@ -418,15 +418,18 @@ async def open_escalation_since(
     return bool(row and row[0])
 
 
-async def queue_team_alerts(conn: AsyncConnection, clinic_id: UUID, escalation_id: UUID) -> int:
-    """One pending alert per team member with a phone for alerts; a retry adds nothing."""
+async def queue_team_alerts(
+    conn: AsyncConnection, clinic_id: UUID, escalation_id: UUID, *, round_: int = 1
+) -> int:
+    """One pending alert per team member with a phone for alerts; a retry adds nothing. Round 2 is
+    the alert again of an urgency nobody attended (milestone 1D)."""
     cursor = await conn.execute(
         """
-        insert into public.team_alerts (clinic_id, escalation_id, user_id)
-        select %s, %s, u.user_id from public.clinic_users u where u.alert_phone is not null
-        on conflict (clinic_id, escalation_id, user_id) do nothing
+        insert into public.team_alerts (clinic_id, escalation_id, user_id, round)
+        select %s, %s, u.user_id, %s from public.clinic_users u where u.alert_phone is not null
+        on conflict (clinic_id, escalation_id, user_id, round) do nothing
         """,
-        (clinic_id, escalation_id),
+        (clinic_id, escalation_id, round_),
     )
     return cursor.rowcount
 

@@ -44,6 +44,8 @@ class PendingMessage:
     media_path: str | None
     created_at: datetime
     reply_id: str | None = None  # the button or list row the patient tapped
+    # Meta's id of the message this one answers (a tap on a template button answers the template).
+    context_meta_message_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,8 +258,8 @@ async def insert_inbound(
         """
         insert into public.messages
           (clinic_id, conversation_id, direction, sender, type, content, reply_id,
-           meta_message_id, meta_media_id, media_mime_type, occurred_at)
-        values (%s, %s, 'inbound', 'patient', %s, %s, %s, %s, %s, %s, %s)
+           meta_message_id, meta_media_id, media_mime_type, occurred_at, context_meta_message_id)
+        values (%s, %s, 'inbound', 'patient', %s, %s, %s, %s, %s, %s, %s, %s)
         on conflict (meta_message_id) do nothing
         returning id
         """,
@@ -271,6 +273,7 @@ async def insert_inbound(
             message.media_id,
             message.media_mime_type[:100] if message.media_mime_type else None,
             message.occurred_at,
+            message.context_id,
         ),
     )
     row = await cursor.fetchone()
@@ -303,7 +306,7 @@ async def unhandled_inbound(
     cursor = await conn.execute(
         """
         select id, type, content, transcription, meta_media_id, media_mime_type, media_path, created_at,
-               reply_id, now()
+               reply_id, context_meta_message_id, now()
         from public.messages
         where conversation_id = %s and direction = 'inbound' and handled_at is null
         order by occurred_at, created_at, id
@@ -377,6 +380,18 @@ async def transcriptions_today(conn: AsyncConnection, conversation_id: UUID) -> 
           and created_at > now() - interval '24 hours'
         """,
         (conversation_id,),
+    )
+    row = await cursor.fetchone()
+    return int(row[0]) if row else 0
+
+
+async def transcriptions_today_in_clinic(conn: AsyncConnection) -> int:
+    """Voice notes of the whole clinic transcribed in the last 24 h, across all its chats."""
+    cursor = await conn.execute(
+        """
+        select count(*) from public.messages
+        where transcription is not null and created_at > now() - interval '24 hours'
+        """
     )
     row = await cursor.fetchone()
     return int(row[0]) if row else 0

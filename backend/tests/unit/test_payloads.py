@@ -68,17 +68,26 @@ def test_a_batch_with_several_messages_keeps_each_one_alone() -> None:
     assert [_content(i)["messages"][0]["id"] for i in items] == ["wamid.1", "wamid.2"]
 
 
-def test_account_level_changes_without_number_are_reported_not_routed() -> None:
+def test_account_level_changes_go_by_account_and_keep_only_the_fields_axon_reads() -> None:
+    """Template status and the like come without a phone number id, under the WABA's id (1D)."""
+    value = {"event": "APPROVED", "message_template_name": "x"}
     raw = webhook_payload(
-        {
-            "field": "message_template_status_update",
-            "value": {"event": "APPROVED", "message_template_name": "x"},
-        },
+        {"field": "message_template_status_update", "value": value},
+        {"field": "business_capability_update", "value": {"max_daily_conversation_per_phone": 1000}},
         waba_id="waba-9",
     )
-    items, unroutable = split_payload(raw)
+    items, account = split_payload(raw)
     assert items == []
-    assert [(u.entry_id, u.field) for u in unroutable] == [("waba-9", "message_template_status_update")]
+    template, other = account
+    assert (template.entry_id, template.field, template.payload) == (
+        "waba-9",
+        "message_template_status_update",
+        value,
+    )
+    assert template.dedup_key.startswith("account:message_template_status_update:")
+    assert (other.field, other.payload) == ("business_capability_update", None)
+    # The same notice again is the same item: a retried webhook stores it once.
+    assert split_payload(raw)[1][0].dedup_key == template.dedup_key
 
 
 def test_unknown_change_for_a_known_number_is_a_trace_without_content() -> None:

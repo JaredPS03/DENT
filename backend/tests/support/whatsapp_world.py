@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 from collections import defaultdict
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -84,10 +85,13 @@ class FakeMeta:
 class MemoryStore:
     def __init__(self) -> None:
         self.files: dict[str, tuple[bytes, str]] = {}
+        # When each file was stored; tests move it back to make a file old.
+        self.stored_at: dict[str, datetime] = {}
 
     async def put(self, clinic_id: UUID, path: str, content: bytes, mime_type: str) -> None:
         check_clinic_path(clinic_id, path)
         self.files[path] = (content, mime_type)
+        self.stored_at[path] = datetime.now(UTC)
 
     async def get(self, clinic_id: UUID, path: str) -> bytes:
         check_clinic_path(clinic_id, path)
@@ -96,6 +100,15 @@ class MemoryStore:
     async def delete(self, clinic_id: UUID, path: str) -> None:
         check_clinic_path(clinic_id, path)
         self.files.pop(path, None)
+        self.stored_at.pop(path, None)
+
+    async def list_older(self, clinic_id: UUID, before: datetime, limit: int) -> list[str]:
+        paths = [
+            path
+            for path, stored in self.stored_at.items()
+            if path.startswith(f"{clinic_id}/") and stored < before
+        ]
+        return sorted(paths)[:limit]
 
 
 def make_context(

@@ -2,7 +2,7 @@
 begin;
 \ir 00_helpers.psql
 
-select plan(10);
+select plan(12);
 
 create function pg_temp.update_own_clinic(p_set text) returns text language sql as $$
   select (pg_temp.run_as('axon_app',
@@ -16,6 +16,10 @@ select is(pg_temp.update_own_clinic($$ bot_enabled = false, urgency_signals = ar
   'el backend apaga el bot y ajusta las señales de urgencia');
 select is(pg_temp.update_own_clinic($$ human_reply_pause_minutes = 60 $$), null,
   'el backend ajusta cuánto calla el bot cuando el consultorio contesta desde su app');
+select is(pg_temp.update_own_clinic($$ media_retention_days = 180, urgent_realert_minutes = 15 $$), null,
+  'el backend ajusta cuánto se guardan audios y fotos, y cuándo se vuelve a avisar de una urgencia');
+select is(pg_temp.update_own_clinic($$ urgent_realert_minutes = 2 $$), '23514',
+  'el re-aviso de una urgencia no baja de 5 minutos');
 
 select is(pg_temp.update_own_clinic($$ whatsapp_phone_number_id = '300000000000003' $$), '42501',
   'el backend no cambia el número de WhatsApp con que se enruta');

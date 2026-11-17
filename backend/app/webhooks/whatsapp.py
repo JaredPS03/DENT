@@ -13,6 +13,7 @@ import json
 import logging
 import re
 from collections import defaultdict
+from datetime import UTC, datetime
 from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -23,9 +24,11 @@ from app.core.config import Settings
 from app.core.deadlines import within
 from app.core.security import verify_meta_signature
 from app.db.connection import Database
-from app.db.webhook_events import clinic_for_phone_number, insert_webhook_items
+from app.db.webhook_events import clinic_for_phone_number, clinics_for_waba, insert_webhook_items
 from app.dependencies import get_db, get_settings_from_app
-from app.whatsapp.payloads import UnroutableChange, WebhookItem, split_payload
+from app.jobs import ops_alerts
+from app.whatsapp.account import read_account_notice
+from app.whatsapp.payloads import AccountChange, WebhookItem, split_payload
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +107,7 @@ async def _read_body_capped(request: Request, limit: int, budget: BodyBudget) ->
         budget.give_back(len(body))
 
 
-def _parse(raw_body: bytes) -> tuple[list[WebhookItem], list[UnroutableChange]]:
+def _parse(raw_body: bytes) -> tuple[list[WebhookItem], list[AccountChange]]:
     raw = json.loads(raw_body)
     if not isinstance(raw, dict):
         raise TypeError("the webhook body must be a JSON object")
@@ -128,19 +131,12 @@ async def receive(request: Request, settings: SettingsDep, db: DatabaseDep) -> R
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
     try:
-        items, unroutable = _parse(raw_body)
+        items, account_changes = _parse(raw_body)
     except (ValueError, TypeError, ValidationError):
         # Signed by Meta but not what we expect: answering 400 makes Meta retry for days,
         # which gives time to fix the model without losing the event.
         logger.exception("whatsapp_webhook.invalid_payload")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST) from None
-
-    for change in unroutable:
-        # Account-level changes (template status, number quality): routed in milestone 1D.
-        logger.info(
-            "whatsapp_webhook.unroutable_change",
-            extra={"waba_id": change.entry_id, "field": change.field},
-        )
 
     by_number: dict[str, list[WebhookItem]] = defaultdict(list)
     for item in items:
@@ -148,6 +144,8 @@ async def receive(request: Request, settings: SettingsDep, db: DatabaseDep) -> R
 
     try:
         stored, duplicates, discarded = await within(STORE_DEADLINE_SECONDS, _route_and_store(db, by_number))
+        if account_changes:
+            await within(STORE_DEADLINE_SECONDS, _route_account_changes(db, settings, account_changes))
     except TimeoutError:
         logger.exception("whatsapp_webhook.store_deadline_exceeded", extra={"items": len(items)})
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE) from None
@@ -176,3 +174,46 @@ async def _route_and_store(db: Database, by_number: dict[str, list[WebhookItem]]
         stored += inserted
         duplicates += len(number_items) - inserted
     return stored, duplicates, discarded
+
+
+async def _route_account_changes(db: Database, settings: Settings, changes: list[AccountChange]) -> None:
+    """Meta's notices about an account go to every clinic of that WhatsApp Business Account. Those
+    about Axon's own account (its templates alerta_equipo and alerta_axon, its number) have no
+    clinic: they become an alert for Jared right away. Fields Axon does not read are only logged."""
+    by_account: dict[str, list[WebhookItem]] = defaultdict(list)
+    for change in changes:
+        if change.payload is None:
+            logger.info(
+                "whatsapp_webhook.account_change_ignored",
+                extra={"waba_id": change.entry_id, "field": change.field},
+            )
+            continue
+        if settings.axon_waba_id is not None and change.entry_id == settings.axon_waba_id:
+            notice = read_account_notice(change.field, change.payload)
+            alert = notice.alert if notice is not None else None
+            logger.warning(
+                "whatsapp_webhook.axon_account_notice", extra={"field": change.field, "alert": alert}
+            )
+            if alert is not None:
+                await ops_alerts.raise_alert(db, alert, None, 1, datetime.now(UTC))
+            continue
+        by_account[change.entry_id].append(
+            WebhookItem(
+                phone_number_id="",
+                field=change.field,
+                kind="account",
+                meta_id=None,
+                dedup_key=change.dedup_key,
+                payload=change.payload,
+            )
+        )
+    for waba_id, account_items in by_account.items():
+        clinic_ids = await clinics_for_waba(db, waba_id)
+        if not clinic_ids:
+            logger.warning(
+                "whatsapp_webhook.unknown_waba_id", extra={"waba_id": waba_id, "items": len(account_items)}
+            )
+            continue
+        for clinic_id in clinic_ids:
+            async with db.clinic_transaction(clinic_id) as conn:
+                await insert_webhook_items(conn, clinic_id, account_items)

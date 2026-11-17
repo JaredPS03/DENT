@@ -3,8 +3,8 @@
 begin;
 \ir 00_helpers.psql
 
--- 14 panel tables x 5 + 5 backend-only tables + 19 (stranger) + 19 (anon).
-select plan(113);
+-- 14 panel tables x 5 + 6 backend-only tables + 20 (stranger) + 20 (anon).
+select plan(116);
 
 create function pg_temp.panel_isolation(p_table text) returns setof text
 language plpgsql as $$

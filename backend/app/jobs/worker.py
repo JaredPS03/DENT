@@ -14,6 +14,7 @@ import random
 import signal
 import sys
 from collections.abc import Awaitable, Callable
+from typing import assert_never
 
 import httpx
 from pydantic import ValidationError
@@ -29,18 +30,25 @@ from app.db.media_store import S3MediaStore
 from app.jobs import queue
 from app.jobs.bot_jobs import handle_erase_unconsented, handle_team_alert
 from app.jobs.context import WorkerContext
+from app.jobs.errors import RetryLaterError
 from app.jobs.ingest import PermanentJobError, handle_event
+from app.jobs.ops_alerts import handle_ops_alert
 from app.jobs.queue import (
     ConversationJob,
     EraseUnconsentedJob,
     EventJob,
     ExpireHoldJob,
+    Job,
+    OpsAlertJob,
     QueuedJob,
+    ScheduledJob,
     TeamAlertJob,
     parse_job,
 )
+from app.jobs.scheduled import handle_scheduled
+from app.jobs.scheduler import run_scheduler
 from app.jobs.timing import MAX_ATTEMPTS, backoff_seconds
-from app.jobs.turns import RetryLaterError, handle_conversation, handle_expire_hold
+from app.jobs.turns import handle_conversation, handle_expire_hold
 from app.whatsapp.client import WhatsAppClient
 from app.whatsapp.media import MetaMediaDownloader
 
@@ -79,7 +87,7 @@ async def run_job(ctx: WorkerContext, queued: QueuedJob) -> None:
 
 async def _dispatch(
     ctx: WorkerContext,
-    job: EventJob | ConversationJob | ExpireHoldJob | TeamAlertJob | EraseUnconsentedJob,
+    job: Job,
     *,
     final_attempt: bool,
     keep_alive: Callable[[], Awaitable[None]],
@@ -92,8 +100,14 @@ async def _dispatch(
         await handle_team_alert(ctx, job)
     elif isinstance(job, EraseUnconsentedJob):
         await handle_erase_unconsented(ctx, job)
-    else:
+    elif isinstance(job, ScheduledJob):
+        await handle_scheduled(ctx, job)
+    elif isinstance(job, OpsAlertJob):
+        await handle_ops_alert(ctx, job)
+    elif isinstance(job, ExpireHoldJob):
         await handle_expire_hold(ctx, job)
+    else:
+        assert_never(job)
 
 
 async def _failed(
@@ -175,9 +189,14 @@ async def main(settings: Settings) -> None:
                 "team_alerts": settings.axon_phone_number_id is not None,
             },
         )
+        # Reminders, the watchdog and the cleanup are queued by this loop (milestone 1D).
+        scheduler = asyncio.create_task(run_scheduler(ctx, stop))
         try:
             await work(ctx, stop)
         finally:
+            stop.set()
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(scheduler, SHUTDOWN_GRACE_SECONDS)
             if isinstance(ctx.model, ClaudeModel):
                 await ctx.model.close()
             await pool.close()

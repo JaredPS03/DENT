@@ -6,8 +6,10 @@ each item, not the model, so it can be reprocessed. Text Postgres cannot store (
 lone surrogates) is replaced first: one odd character must never lose a patient's message.
 
 One webhook can carry several entries and changes, even for different clinics: each item is
-routed on its own by `metadata.phone_number_id`. Account-level changes (template status,
-number quality) carry no phone number id; milestone 1D decides how to route them.
+routed on its own by `metadata.phone_number_id`. Account-level changes (template status and
+category, number quality, account restrictions) carry no phone number id: they are routed by the
+account's id (entry[].id, the WABA id) and keep their content, which holds no patient data
+(milestone 1D, app.whatsapp.account).
 
 Confirmed field names (Meta's official sample app fbsamples/whatsapp-business-jaspers-market and
 the official Node SDK): object, entry[].id, entry[].changes[].field and .value,
@@ -28,7 +30,17 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-ItemKind = Literal["message", "status", "message_echo", "other"]
+ItemKind = Literal["message", "status", "message_echo", "account", "other"]
+
+# Account-level fields whose content is kept and processed (app.whatsapp.account).
+ACCOUNT_FIELDS = frozenset(
+    {
+        "message_template_status_update",
+        "template_category_update",
+        "phone_number_quality_update",
+        "account_update",
+    }
+)
 
 
 class _MetaModel(BaseModel):
@@ -83,11 +95,14 @@ class WebhookItem:
 
 
 @dataclass(frozen=True)
-class UnroutableChange:
-    """A change without metadata.phone_number_id (account-level). Ids only, for logging."""
+class AccountChange:
+    """A change without metadata.phone_number_id: about the WhatsApp Business Account `entry_id`.
+    `payload` is its value for the fields Axon reads (ACCOUNT_FIELDS) and None for the rest."""
 
     entry_id: str
     field: str
+    dedup_key: str = ""
+    payload: dict[str, Any] | None = None
 
 
 # The webhook fields whose content is stored, and the lists each one carries.
@@ -122,7 +137,7 @@ def clean_for_postgres(value: Any) -> Any:
     return value
 
 
-def split_payload(raw: dict[str, Any]) -> tuple[list[WebhookItem], list[UnroutableChange]]:
+def split_payload(raw: dict[str, Any]) -> tuple[list[WebhookItem], list[AccountChange]]:
     """Validates the payload and splits it into one item per message or status.
 
     Raises pydantic.ValidationError when the payload is not a WhatsApp webhook.
@@ -130,15 +145,25 @@ def split_payload(raw: dict[str, Any]) -> tuple[list[WebhookItem], list[Unroutab
     raw = clean_for_postgres(raw)
     payload = WebhookPayload.model_validate(raw)
     items: list[WebhookItem] = []
-    unroutable: list[UnroutableChange] = []
+    account: list[AccountChange] = []
 
     for entry_index, entry in enumerate(payload.entry):
         for change_index, change in enumerate(entry.changes):
+            raw_value: dict[str, Any] = raw["entry"][entry_index]["changes"][change_index]["value"]
             if change.value.metadata is None:
-                unroutable.append(UnroutableChange(entry_id=entry.id, field=change.field))
+                if change.field in ACCOUNT_FIELDS:
+                    account.append(
+                        AccountChange(
+                            entry_id=entry.id,
+                            field=change.field,
+                            dedup_key=f"account:{change.field}:{_digest(raw_value)}",
+                            payload=raw_value,
+                        )
+                    )
+                else:
+                    account.append(AccountChange(entry_id=entry.id, field=change.field))
                 continue
             phone_number_id = change.value.metadata.phone_number_id
-            raw_value: dict[str, Any] = raw["entry"][entry_index]["changes"][change_index]["value"]
             lists = _ITEM_LISTS.get(change.field, ())
             common = {k: v for k, v in raw_value.items() if k not in {name for name, _ in lists}}
 
@@ -165,9 +190,7 @@ def split_payload(raw: dict[str, Any]) -> tuple[list[WebhookItem], list[Unroutab
 
             if not found:
                 # Not a message nor a status: only a trace (field and a digest for deduplication).
-                digest = hashlib.sha256(
-                    json.dumps(raw_value, sort_keys=True, separators=(",", ":")).encode()
-                ).hexdigest()
+                digest = _digest(raw_value)
                 items.append(
                     WebhookItem(
                         phone_number_id=phone_number_id,
@@ -179,4 +202,8 @@ def split_payload(raw: dict[str, Any]) -> tuple[list[WebhookItem], list[Unroutab
                     )
                 )
 
-    return items, unroutable
+    return items, account
+
+
+def _digest(value: dict[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
