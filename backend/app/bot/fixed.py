@@ -88,9 +88,16 @@ def consent_reminder(voice: Voice, notice_url: str) -> str:
 
 
 def consent_declined(voice: Voice) -> str:
+    """The bot stops writing; the chat goes to the team, who is alerted (pending legal review)."""
     if voice.formal:
-        return "Entendido. El equipo del consultorio le atenderá directamente por este medio."
-    return "Entendido. El equipo del consultorio te atenderá directamente por este medio."
+        return (
+            f"Entendido. El asistente ya no le escribirá; alguien del equipo de {voice.clinic_name} "
+            "le responderá por aquí."
+        )
+    return (
+        f"Entendido. El asistente ya no te escribirá; alguien del equipo de {voice.clinic_name} "
+        "te responderá por aquí."
+    )
 
 
 def _to(person: str) -> str:

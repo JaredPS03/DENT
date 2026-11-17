@@ -76,10 +76,12 @@ _INTENSE = _phrases(
 )  # fmt: skip
 _HYPOTHETICAL = _phrases("si", "por si", "va a", "van a", "aunque", "cuando")
 _TEETH = _phrases("diente", "dientes", "muela", "muelas", "colmillo", "colmillos", "incisivo")
-_FACE = _phrases(
-    "cara", "cachete*", "mejilla*", "cuello", "ojo", "ojos", "parpado*", "quijada", "mandibula", "garganta",
-    "labio*", "lengua", "pomulo*", "barbilla", "debajo de la lengua",
+_FACE_AND_NECK = _phrases(
+    "cara", "cachete*", "mejilla*", "cuello", "quijada", "mandibula", "garganta", "pomulo*", "barbilla",
 )  # fmt: skip
+# A "bolita" on the eyelid or the lip is common and not an emergency; swollen lips or tongue are.
+_FACE = (*_FACE_AND_NECK, *_phrases("ojo", "ojos", "parpado*", "labio*", "lengua", "debajo de la lengua"))
+_HIT_PLACES = (*_TEETH, *_phrases("boca", "labio*", "cara", "mandibula", "quijada", "encia*"))
 _PROSTHESES = _phrases(
     "resina", "calza", "corona", "bracket", "brackets", "protesis", "placa", "puente", "funda", "amalgama",
 )  # fmt: skip
@@ -195,9 +197,10 @@ _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
         ),
     ),
     "hinchazón de cara o cuello": (
+        _Rule(first=_phrases("hinch*", "inflam*"), second=_FACE, gap=4, either_order=True),
         _Rule(
-            first=_phrases("hinch*", "inflam*", "bola", "bolita", "abultad*", "deformad*"),
-            second=_FACE,
+            first=_phrases("bola", "bolita", "abultad*", "deformad*"),
+            second=_FACE_AND_NECK,
             gap=4,
             either_order=True,
         ),
@@ -235,16 +238,11 @@ _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
     "golpe o diente roto": (
         _Rule(
             first=_phrases(
-                "golpe",
-                "golpee",
-                "golpeo",
-                "se golpeo",
+                "golpe*",
                 "me pegue",
                 "me pegaron",
                 "le pegaron",
-                "se pego",
                 "me cai",
-                "se cayo",
                 "caida",
                 "accidente",
                 "choque",
@@ -253,12 +251,18 @@ _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
                 "pelotazo",
                 "patada",
                 "codazo",
-                "me lastime",
-                "se lastimo",
             ),
-            second=(*_TEETH, *_phrases("boca", "labio*", "cara", "mandibula", "quijada", "encias")),
+            second=_HIT_PLACES,
             gap=6,
             either_order=True,
+        ),
+        # Verbs with two meanings: "se cayó la resina" or "me lastimé con el bracket" are not blows.
+        _Rule(
+            first=_phrases("se cayo", "se pego", "me lastime", "se lastimo"),
+            second=_HIT_PLACES,
+            gap=6,
+            either_order=True,
+            unless_anywhere=_PROSTHESES,
         ),
         _Rule(
             first=_phrases(
@@ -286,16 +290,23 @@ _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
             either_order=True,
             unless_anywhere=(*_PROSTHESES, *_phrases("de leche")),
         ),
-        # A tooth that came out: an emergency after a blow, not a wisdom tooth or a baby's first.
+        # A tooth that came out: "se me salió" is a tooth lost, "me salió" is one growing in.
         _Rule(
-            first=_phrases("salio", "cayo", "zafo"),
+            first=_phrases(
+                "se me salio",
+                "se le salio",
+                "se salio",
+                "se me cayo",
+                "se le cayo",
+                "se cayo",
+                "se me zafo",
+                "se le zafo",
+                "se zafo",
+            ),
             second=_TEETH,
             gap=3,
             either_order=True,
-            unless_anywhere=(
-                *_PROSTHESES,
-                *_phrases("de leche", "juicio", "bebe", "primer diente", "primera muela", "nuevo", "nueva"),
-            ),
+            unless_anywhere=(*_PROSTHESES, *_phrases("de leche", "juicio", "primer diente", "primera muela")),
         ),
     ),
     "dificultad para tragar o respirar": (
@@ -314,7 +325,7 @@ _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
                 "apenas puede",
                 "no le deja",
             ),
-            second=_phrases("tragar", "respirar", "pasar saliva", "pasar la saliva"),
+            second=_phrases("tragar", "respirar", "pasar saliva", "pasar la saliva", "pasar ni el agua"),
             gap=3,
         ),
         _Rule(
@@ -334,6 +345,15 @@ _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
                 "se asfixia",
                 "no me pasa la saliva",
                 "no puedo pasar ni el agua",
+                "le falta el aire",
+                "le falta aire",
+                "no le entra el aire",
+                "no le entra aire",
+                "se esta ahogando",
+                "se le esta cerrando la garganta",
+                "no le pasa la saliva",
+                "tiene la garganta cerrada",
+                "tengo la garganta cerrada",
             )
         ),
     ),
@@ -345,9 +365,20 @@ _RULES = {normalize(signal): rules for signal, rules in _RULES_BY_SIGNAL.items()
 assert set(_RULES) == {normalize(signal) for signal in DEFAULT_SIGNALS}  # noqa: S101 - a typo here disables a signal
 
 
+BREATHING_SIGNAL = DEFAULT_SIGNALS[5]
+
+
 def is_breathing_signal(signal: str) -> bool:
     """Trouble breathing or swallowing: the one signal that always alerts again."""
-    return normalize(signal) == normalize(DEFAULT_SIGNALS[5])
+    return normalize(signal) == normalize(BREATHING_SIGNAL)
+
+
+def active_signals(signals: Iterable[str]) -> tuple[str, ...]:
+    """The clinic's signals with trouble breathing or swallowing first: a clinic cannot turn it off,
+    and when a message matches several, it is the one the team must hear about."""
+    signals = tuple(signals)
+    breathing = next((signal for signal in signals if is_breathing_signal(signal)), BREATHING_SIGNAL)
+    return (breathing, *(signal for signal in signals if not is_breathing_signal(signal)))
 
 
 def detect_urgency(text: str, signals: Iterable[str]) -> str | None:

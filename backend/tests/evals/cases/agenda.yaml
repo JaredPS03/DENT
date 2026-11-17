@@ -153,7 +153,15 @@
     - say: "quiero una limpieza la próxima semana"
       expect: {tools_include: [buscar_disponibilidad], offers_slots: true}
     - say: "el primero que me ofreciste está perfecto"
-      expect: {tools_include: [agendar_cita], allow_booking: true, booked: true}
+      expect: {tools_include: [agendar_cita], allow_booking: true, booked: true, booked_first_offered: true}
+
+- id: elegir-horario-por-audio
+  category: agendar por audio
+  turns:
+    - audio: "quiero una limpieza la próxima semana"
+      expect: {tools_include: [buscar_disponibilidad], offers_slots: true}
+    - audio: "el primero que me dijiste está bien"
+      expect: {tools_include: [agendar_cita], allow_booking: true, booked: true, booked_first_offered: true}
 
 - id: nota-de-voz-sin-transcribir
   category: agendar por audio

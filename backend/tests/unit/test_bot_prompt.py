@@ -83,8 +83,8 @@ def test_history_starts_and_ends_with_the_patient_and_marks_what_the_code_adds()
     assert [m["role"] for m in messages] == ["user", "assistant", "user"]
     assert messages[0]["content"] == "<mensaje_paciente>quiero una limpieza</mensaje_paciente>"
     assert messages[2]["content"].splitlines() == [
-        "<mensaje_paciente>Jue 4:00 pm</mensaje_paciente> (Tocó el horario «Jue 4:00 pm» de Limpieza; "
-        "inicio exacto: 2026-11-19T16:00:00-06:00)",
+        "<mensaje_paciente>Jue 4:00 pm</mensaje_paciente> (Tocó el horario «Jue 4:00 pm» (es el jueves "
+        "19 de noviembre, 4:00 pm) de Limpieza; inicio exacto: 2026-11-19T16:00:00-06:00)",
         "<transcripcion>y si se puede temprano mejor</transcripcion>",
         "(Nota de voz que no se pudo transcribir)",
         "(Tocó «Acepto» en el aviso de privacidad)",
@@ -114,6 +114,8 @@ def test_a_clinic_whose_data_contains_braces_still_gets_its_prompt() -> None:
     )
     assert "Dental {{ahora}} Sonrisa" in blocks[0]["text"]  # the clinic's text, as written
     assert "Efectivo {{y}} tarjeta" in blocks[0]["text"]
+    # Trouble breathing or swallowing stays in the list even if the clinic removed it.
+    assert "señales: dificultad para tragar o respirar; dolor fuerte," in blocks[0]["text"]
 
 
 def test_dates_of_this_year_go_without_the_year() -> None:
@@ -127,5 +129,14 @@ def test_the_slots_already_shown_close_the_history() -> None:
     slot = OfferedSlot("abcd2345", uuid4(), "Limpieza", start, "Jue 4:00 pm")
     messages = build_messages([row("inbound", "el del jueves en la tarde")], {}, TZ, shown=[slot])
     assert messages[-1]["content"].splitlines()[-1] == (
-        "(Horarios que ya le mostraste: «Jue 4:00 pm» de Limpieza, inicio exacto: 2026-11-19T16:00:00-06:00)"
+        "(Horarios que ya le mostraste: «Jue 4:00 pm» (es el jueves 19 de noviembre, 4:00 pm) de Limpieza, "
+        "inicio exacto: 2026-11-19T16:00:00-06:00)"
     )
+
+
+def test_a_label_written_yesterday_comes_with_its_real_date() -> None:
+    # Offered Monday night as "Mañana 10:30 am"; read on Tuesday it would mean Wednesday.
+    start = datetime(2026, 11, 17, 16, 30, tzinfo=UTC)
+    slot = OfferedSlot("abcd2345", uuid4(), "Limpieza", start, "Mañana 10:30 am")
+    messages = build_messages([row("inbound", "sí, ese de mañana")], {}, TZ, shown=[slot])
+    assert "«Mañana 10:30 am» (es el martes 17 de noviembre, 10:30 am)" in messages[-1]["content"]

@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from app.bot.prompt import spoken_moment
 from app.bot.reply import CONSENT_ACCEPT_PREFIX, CONSENT_DECLINE_ID, OfferedSlot, slot_button_id
 from app.db.bot import HistoryRow
 
@@ -54,7 +55,8 @@ def build_messages(
         turns.pop()
     if turns and shown:
         listed = "; ".join(
-            f"«{slot.label}» de {slot.service_name}, inicio exacto: {slot_button_id(slot, tz)}"
+            f"«{slot.label}» ({_when(slot, tz)}) de {slot.service_name}, inicio exacto: "
+            f"{slot_button_id(slot, tz)}"
             for slot in shown
         )
         role, text = turns[-1]
@@ -81,7 +83,7 @@ def _patient_line(  # noqa: PLR0911 - one line per kind of message
     slot = _tapped_slot(row.reply_id, slots_by_start)
     if slot is not None:
         line += (
-            f" (Tocó el horario «{slot.label}» de {slot.service_name}; "
+            f" (Tocó el horario «{slot.label}» ({_when(slot, tz)}) de {slot.service_name}; "
             f"inicio exacto: {slot_button_id(slot, tz)})"
         )
     return line
@@ -105,3 +107,9 @@ def _tapped_slot(reply_id: str | None, slots_by_start: Mapping[datetime, Offered
     if starts_at.tzinfo is None:
         return None
     return slots_by_start.get(starts_at)
+
+
+def _when(slot: OfferedSlot, tz: ZoneInfo) -> str:
+    """The full date: a label written yesterday ("Mañana 10:30 am") may mean today."""
+    local = slot.starts_at.astimezone(tz)
+    return f"es el {spoken_moment(local, this_year=local.year)}"

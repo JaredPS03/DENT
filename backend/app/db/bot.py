@@ -285,15 +285,18 @@ class StoredSlot:
     starts_at: datetime
     label: str
     offered_at: datetime
-    shown_at: datetime | None = None  # when the patient saw it in a message of the bot
+    # When a message of the bot that reached WhatsApp showed it to the patient.
+    shown_at: datetime | None = None
 
 
 async def offered_slots(conn: AsyncConnection, conversation_id: UUID, *, since: datetime) -> list[StoredSlot]:
     cursor = await conn.execute(
         """
         select o.slot_key, o.service_id, s.name, o.provider_id, o.starts_at, o.label, o.offered_at,
-               o.shown_at
-        from public.offered_slots o join public.services s on s.id = o.service_id
+               case when m.delivery_status in ('sent', 'delivered', 'read') then o.shown_at end
+        from public.offered_slots o
+          join public.services s on s.id = o.service_id
+          left join public.messages m on m.id = o.shown_in_message_id
         where o.conversation_id = %s and o.offered_at >= %s
         order by o.offered_at, o.starts_at
         """,
@@ -343,17 +346,17 @@ async def save_offered_slots(
 
 
 async def mark_slots_shown(
-    conn: AsyncConnection, conversation_id: UUID, slots: Sequence[tuple[str, UUID]]
+    conn: AsyncConnection, conversation_id: UUID, message_id: UUID, slots: Sequence[tuple[str, UUID]]
 ) -> None:
     """The slots (key, service) a reply puts in front of the patient: only these can be booked
-    from the next turn on."""
+    from the next turn on, and only once that message reached WhatsApp."""
     for key, service_id in slots:
         await conn.execute(
             """
-            update public.offered_slots set shown_at = now()
+            update public.offered_slots set shown_at = now(), shown_in_message_id = %s
             where conversation_id = %s and slot_key = %s and service_id = %s
             """,
-            (conversation_id, key, service_id),
+            (message_id, conversation_id, key, service_id),
         )
 
 

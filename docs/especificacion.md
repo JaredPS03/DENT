@@ -267,7 +267,7 @@ La IA solo actúa a través de estas funciones; el consultorio y el paciente los
 | `consultar_mis_citas` | Lista las citas próximas del paciente | ninguno | Solo del paciente que escribe | 1 |
 | `info_consultorio` | Horarios, dirección, servicios, precios de referencia, formas de pago | tema | Si un dato no está registrado, dice que no lo sabe y ofrece pasar con el consultorio | 1 |
 | `registrar_paciente` | Crea o completa al paciente | nombre | El teléfono sale de WhatsApp, no se lo pregunta | 1 |
-| `escalar_a_humano` | Pausa el bot y alerta al consultorio | motivo, prioridad, resumen | Obligatoria ante dolor fuerte, sangrado, hinchazón, quejas o dudas clínicas | 1 |
+| `escalar_a_humano` | Pausa el bot y alerta al consultorio | motivo, prioridad, resumen | Obligatoria ante dolor fuerte, sangrado, hinchazón y quejas. Ante una duda clínica, primero ofrece una valoración; escala si el paciente quiere hablar con el consultorio | 1 |
 | `agregar_lista_espera` | Anota al paciente para un hueco | servicio, rango de fechas | Solo si no hay horario que le acomode | 3 |
 | `crear_enlace_anticipo` | Genera el enlace de pago | cita | Solo para servicios marcados con anticipo | 4 |
 | `registrar_comprobante` | Guarda un comprobante leído de una foto | cita, monto, fecha, referencia | Queda pendiente hasta que el consultorio lo aprueba | 4 |

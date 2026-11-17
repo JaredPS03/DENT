@@ -6,7 +6,7 @@
 2. Deterministic urgency filter: escalate as urgent, alert the team, send the fixed urgency
    message and stop. Before the privacy notice, so a patient in pain always gets help.
 3. Consent gate: Acepto stores the proof and the turn goes on to answer what the patient wrote
-   before; No acepto hands the chat to a person; a first message gets the notice; later ones get
+   before; No acepto hands the chat to the team; a first message gets the notice; later ones get
    general answers from the AI with the notice under them. What a patient who never accepted
    wrote is erased 24 h later.
 4. The AI with its tools. If anything fails, the fixed fallback message goes out and the chat
@@ -39,7 +39,7 @@ from app.bot.reply import (
     consent_buttons,
 )
 from app.bot.tools import Tools, TurnState, escalate
-from app.bot.urgency import detect_urgency, is_breathing_signal
+from app.bot.urgency import active_signals, detect_urgency, is_breathing_signal
 from app.db import bot as data
 from app.db import conversations
 from app.db.conversations import PendingMessage
@@ -55,9 +55,11 @@ HISTORY_WINDOW = timedelta(hours=24)
 # A slot offered longer ago than this can no longer be booked from its button.
 OFFER_WINDOW = timedelta(hours=24)
 CONSENT_WINDOW = timedelta(hours=24)
-# While the team has an open urgent escalation for the chat, more urgent messages do not alert
-# again: the person who answers already sees them.
+# While the team has an open urgent escalation for the chat, more urgent messages with the same
+# signal do not alert again: the person who answers already sees them. Trouble breathing or
+# swallowing alerts again after a few minutes.
 URGENT_REPEAT_WINDOW = timedelta(hours=2)
+BREATHING_REPEAT_WINDOW = timedelta(minutes=10)
 # The slots already shown that the AI sees, so the patient can choose one by words or audio.
 MAX_SHOWN_SLOTS = 10
 
@@ -72,6 +74,8 @@ class BotReply:
     prompt_version: str | None = None
     # Slots (key, service) the reply shows: from the next turn on, the patient may choose them.
     slot_keys: tuple[tuple[str, UUID], ...] = ()
+    # The chat passes to the team with this reply.
+    hand_over: bool = False
 
 
 async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913 - the steps of one turn, each with its own exit
@@ -97,7 +101,7 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913 - the steps of one turn,
         profile = await data.patient_profile(conn, conversation.patient_id, clinic.notice_version)
         requested_at = await data.consent_requested_at(conn, conversation_id)
     voice = Voice(clinic.name, clinic.doctor, clinic.formal)
-    signal = detect_urgency(_burst_text(batch), clinic.urgency_signals)
+    signal = detect_urgency(_burst_text(batch), active_signals(clinic.urgency_signals))
     paused = conversation.bot_paused_until is not None and conversation.bot_paused_until > now
     bot_on = clinic.bot_enabled and conversation.status == "bot" and not paused
 
@@ -164,9 +168,10 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913 - the steps of one turn,
             batch=batch,
             requested_at=requested_at,
             now=now,
+            turn_key=turn_key,
         )
         if isinstance(gate, BotReply):
-            return await finish(gate, "consent_notice")
+            return await finish(gate, "consent_notice", hand_over=gate.hand_over)
         profile, consent_request = gate
 
     if _unheard_voice_note(batch):
@@ -245,6 +250,7 @@ async def _consent_gate(  # noqa: PLR0913 - what the gate looks at
     batch: Sequence[PendingMessage],
     requested_at: datetime | None,
     now: datetime,
+    turn_key: str,
 ) -> BotReply | tuple[data.PatientProfile, ConsentRequest | None]:
     """For a patient who has not accepted the notice: the message to send instead of the AI, or
     the profile to go on with and, while they have not accepted, the notice for the AI's answer."""
@@ -257,9 +263,18 @@ async def _consent_gate(  # noqa: PLR0913 - what the gate looks at
             await data.accept_consent(conn, clinic.id, patient_id, clinic.notice_version, tap[1])
         return data.PatientProfile(profile.name, consented=True, returning=profile.returning), None
     if tap is not None and tap[0] == CONSENT_DECLINE_ID:
-        async with ctx.db.clinic_transaction(clinic.id) as conn:
-            await conversations.set_status(conn, conversation_id, "human")
-        return _fixed(fixed.consent_declined(voice))
+        # The message promises that someone answers: the team is alerted, without details.
+        await escalate(
+            ctx.db,
+            clinic_id=clinic.id,
+            conversation_id=conversation_id,
+            reason="no aceptó el aviso de privacidad",
+            priority="normal",
+            summary=_declined_summary(profile.name),
+            turn_key=turn_key,
+        )
+        text = fixed.consent_declined(voice)
+        return BotReply(text, outbound.text(text), hand_over=True)
     if requested_at is None or now - requested_at >= CONSENT_WINDOW:
         async with ctx.db.clinic_transaction(clinic.id) as conn:
             await data.mark_consent_requested(conn, conversation_id)
@@ -341,7 +356,7 @@ async def _finish(  # noqa: PLR0913 - the turn's results, written together
         if not await conversations.holds_lease(conn, conversation_id, lease_token):
             raise LeaseLostError
         if reply is not None:
-            await conversations.insert_outbound(
+            message = await conversations.insert_outbound(
                 conn,
                 clinic_id=clinic_id,
                 conversation_id=conversation_id,
@@ -356,7 +371,7 @@ async def _finish(  # noqa: PLR0913 - the turn's results, written together
                 prompt_version=reply.prompt_version,
             )
             if reply.slot_keys:
-                await data.mark_slots_shown(conn, conversation_id, reply.slot_keys)
+                await data.mark_slots_shown(conn, conversation_id, message.id, reply.slot_keys)
         if hand_over:
             await conversations.set_status(conn, conversation_id, "human")
         await conversations.mark_handled(conn, [message.id for message in batch])
@@ -408,13 +423,11 @@ async def _alert_only(  # noqa: PLR0913 - what the alert needs
     turn_key: str,
 ) -> bool:
     """Alerts the team about an urgency in a chat the bot does not answer. While the same signal
-    is still open from less than 2 h ago it does not alert again; a new signal, or trouble
-    breathing or swallowing, always does. True if an escalation was opened."""
-    repeat = not is_breathing_signal(signal)
+    is still open from less than 2 h ago it does not alert again; a new signal always does, and
+    trouble breathing or swallowing does again after 10 minutes. True if an escalation was opened."""
+    window = BREATHING_REPEAT_WINDOW if is_breathing_signal(signal) else URGENT_REPEAT_WINDOW
     async with ctx.db.clinic_transaction(clinic_id) as conn:
-        if repeat and await data.open_escalation_since(
-            conn, conversation_id, "urgent", now - URGENT_REPEAT_WINDOW, reason=signal
-        ):
+        if await data.open_escalation_since(conn, conversation_id, "urgent", now - window, reason=signal):
             return False
     await escalate(
         ctx.db,
@@ -472,7 +485,8 @@ def _urgent_summary(name: str | None, signal: str, *, answered: bool) -> str:
             "respirar o tragar."
         )
     return (
-        f"{wants} Intentado: nada; el chat estaba en pausa o con el equipo y no se le contestó. Escríbele ya."
+        f"{wants} Intentado: nada; el chat estaba en pausa o con el equipo y no se le contestó. "
+        "Llámale o escríbele ya."
     )
 
 
@@ -485,6 +499,15 @@ def _fallback_summary(name: str | None) -> str:
 
 def _unheard_summary(name: str | None) -> str:
     return (
-        f"Paciente: {_patient_label(name)}. Quiere: mandó una nota de voz que no se pudo transcribir. "
-        "Intentado: se le dijo que el equipo la escuchará; escúchala en la bandeja y contéstale."
+        f"Paciente: {_patient_label(name)}. Quiere: no se sabe; mandó una nota de voz que no se pudo "
+        "transcribir. Intentado: se le dijo que el equipo la escuchará; escúchala en la bandeja y "
+        "contéstale."
+    )
+
+
+def _declined_summary(name: str | None) -> str:
+    return (
+        f"Paciente: {_patient_label(name)}. Quiere: hablar con una persona; no aceptó el aviso de "
+        "privacidad, así que el asistente ya no le escribe y no se guardan detalles. Intentado: se "
+        "le dijo que alguien del equipo le responderá por WhatsApp; lo que escriba se borra en 24 h."
     )

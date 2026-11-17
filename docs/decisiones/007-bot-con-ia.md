@@ -45,7 +45,7 @@ El 1C reemplaza el bot de eco del 1B por el asistente con IA. La especificación
 8. **Registro:** cada turno queda en `bot_turns` con tokens (incluida la caché), latencia, herramientas, modelo, versión del prompt, cómo terminó y el costo estimado (precios en `app/bot/costs.py`). Cada mensaje del bot guarda su versión del prompt.
 9. **El cliente fija la URL de la API de Anthropic.** El SDK seguiría `ANTHROPIC_BASE_URL`, y los mensajes de pacientes solo deben ir a Anthropic.
 10. **Evaluaciones** (`backend/tests/evals/`):
-    - 82 casos en YAML. Cada uno corre el turno real contra la base local, con Meta simulado y el reloj real; los casos no dependen de fechas fijas.
+    - 84 casos en YAML. Cada uno corre el turno real contra la base local, con Meta simulado y el reloj real; los casos no dependen de fechas fijas.
     - Revisiones en código, y rúbrica de tono y claridad calificada por `claude-sonnet-5-5`.
     - Urgencias, inyección y dudas clínicas no pueden fallar.
 
@@ -79,6 +79,33 @@ El 1C reemplaza el bot de eco del 1B por el asistente con IA. La especificación
     - acepta un horario elegido con palabras;
     - en los ejemplos usa los datos del consultorio, no nombres fijos.
   - **Evaluaciones:** 19 casos nuevos (82 en total) y más revisiones en código.
+
+### Segunda ronda: decisiones de Jared y revisiones
+
+- **Decisiones de Jared:**
+  - **Señal de respirar o tragar:** fija. El consultorio no puede quitarla y se revisa antes que las demás (`active_signals`), también en la lista que ve la IA.
+  - **Dudas clínicas:** primero se ofrece una valoración; se escala solo si el paciente quiere que le conteste alguien, o si hay urgencia. Cambió la especificación, la regla 10 del prompt y la descripción de `escalar_a_humano`.
+  - **No acepto:** "Entendido. El asistente ya no te escribirá; alguien del equipo de {consultorio} te responderá por aquí." El chat pasa al equipo, ahora con un escalado y su alerta, porque el mensaje promete una respuesta. Falta la revisión del abogado.
+  - **911 con el chat en pausa:** se queda como está (solo alerta al equipo).
+- **revisor-seguridad:**
+  - **Respirar o tragar con el chat en pausa:** vuelve a alertar después de 10 minutos, no con cada mensaje.
+  - **Horarios mostrados:** un horario cuenta como visto solo si el mensaje que lo mostró llegó a WhatsApp (`offered_slots.shown_in_message_id`). Si ese mensaje falló, no se puede agendar.
+  - **No acepto:** el chat pasa al equipo al cerrar el turno, junto con la respuesta, como los demás escalados.
+  - **Diente que se salió:** "nuevo" o "nueva" ya no apagan la regla ("soy paciente nuevo, se me salió un diente" sí dispara).
+  - **Enlaces:** el nombre de un archivo dentro de un enlace del consultorio ("aviso.pdf") y un título pegado a un nombre ("Dra.Laura") ya no se toman por dominios.
+- **revisor-clinico:**
+  - **Horarios:** la IA ve la fecha completa de cada horario, porque una etiqueta de ayer ("Mañana 10:30 am") puede ser hoy.
+  - **Filtro de urgencia:**
+    - "se cayó", "se pegó" y "me lastimé" no disparan si hablan de resinas, calzas o brackets;
+    - "golpe" se reconoce por su raíz;
+    - el diente que se salió exige la forma con "se" ("se me salió"; "me salió" es uno que brota);
+    - más frases de respirar en tercera persona ("no le entra el aire", "se está ahogando");
+    - una "bolita" en el párpado, el labio o la lengua ya no dispara; hinchados, sí.
+  - **Sin consentimiento,** una urgencia que encuentra la IA le dice al equipo que es urgencia, sin síntomas.
+  - **Prompt:** la regla 8 aclara que lo de no poner síntomas es solo sin consentimiento; fotos y archivos no se prometen revisar; tras "Acepto", una nota de voz sin transcribir pasa al equipo.
+  - **Resúmenes:** "Llámale o escríbele ya" en urgencias sin respuesta, y "Quiere: no se sabe" en la nota de voz.
+  - **Evaluaciones:** 2 casos nuevos (84 en total), revisa que se agende justo el horario elegido y la rúbrica ignora los textos fijos.
+- **La versión del prompt sigue en 1.0:** ningún paciente ni evaluación ha usado una versión anterior. Desde el primer despliegue, cada cambio sube la versión.
 
 ## Alternativas
 

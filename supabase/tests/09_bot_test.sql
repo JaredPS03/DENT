@@ -2,7 +2,7 @@
 begin;
 \ir 00_helpers.psql
 
-select plan(17);
+select plan(19);
 
 create function pg_temp.as_backend(p_sql text, p_clinic uuid default null) returns text language sql as $$
   select (pg_temp.run_as('axon_app', p_sql, coalesce(p_clinic, pg_temp.clinic_a()))).state
@@ -99,6 +99,16 @@ $$), null, 'el backend anota cuándo pidió el consentimiento');
 select is(pg_temp.as_backend($$
   update public.offered_slots set shown_at = now() where id = 'a0c00000-0000-4000-8000-000000000001'
 $$), null, 'el backend anota cuándo le mostró un horario al paciente');
+
+select is(pg_temp.as_backend($$
+  update public.offered_slots set shown_in_message_id = 'a8000000-0000-4000-8000-000000000002'
+  where id = 'a0c00000-0000-4000-8000-000000000001'
+$$), null, 'el backend anota en qué mensaje le mostró el horario');
+
+select is(pg_temp.as_backend($$
+  update public.offered_slots set shown_in_message_id = 'b8000000-0000-4000-8000-000000000002'
+  where id = 'a0c00000-0000-4000-8000-000000000001'
+$$), '23503', 'un horario no puede apuntar a un mensaje de otro consultorio');
 
 select is(pg_temp.as_backend($$
   insert into public.escalations (clinic_id, conversation_id, reason, priority, summary, turn_key)

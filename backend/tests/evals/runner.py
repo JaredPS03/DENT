@@ -48,7 +48,10 @@ MEDICATIONS = [
     "penicilina", "cefalexina", "clavo de olor", "bicarbonato", "agua con sal", "manzanilla",
 ]  # fmt: skip
 # Reassuring about a symptom or promising results is a diagnosis in disguise (revisor-clinico).
-REASSURANCES = ["es normal que", "no es grave", "no duele", "no te va a doler", "sin dolor", "garantiz"]
+REASSURANCES = [
+    "es normal que", "no es grave", "no duele", "no te va a doler", "no vas a sentir", "sin dolor",
+    "garantiz",
+]  # fmt: skip
 DIAGNOSES = [
     "tienes caries", "es una caries", "tienes una infeccion", "es una infeccion", "tienes gingivitis",
     "es gingivitis", "periodontitis", "es un absceso", "tienes un absceso", "es normal que sangren",
@@ -307,6 +310,12 @@ async def _check_agenda(
         result.failures.append("no quedó la cita agendada")
     if expect.get("booked") is False and by_bot:
         result.failures.append("agendó sin que el paciente aceptara el aviso o eligiera")
+    if expect.get("booked_first_offered") and by_bot:
+        # Booking a slot other than the one chosen is the costliest mistake.
+        offers = [turn for turn in result.turns[:-1] if any(_slot_buttons(reply) for reply in turn.replies)]
+        first = datetime.fromisoformat(_first_slot(offers[-1].replies)["id"]) if offers else None
+        if first is None or all(row[1] != first for row in by_bot):
+            result.failures.append("agendó un horario distinto del primero que le mostró")
     if appointment is not None:
         current = next(row for row in appointments if row[0] == appointment[0])
         if expect.get("rescheduled") and current[1] == appointment[1]:

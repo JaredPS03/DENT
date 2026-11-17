@@ -4,7 +4,7 @@ about a procedure."""
 
 import pytest
 
-from app.bot.urgency import DEFAULT_SIGNALS, detect_urgency, normalize
+from app.bot.urgency import DEFAULT_SIGNALS, active_signals, detect_urgency, normalize
 
 PAIN, BLEEDING, SWELLING, FEVER, TRAUMA, BREATHING = DEFAULT_SIGNALS
 
@@ -61,6 +61,11 @@ SHOULD_FIRE = [
     ("se me partio el diente de enfrente", TRAUMA),
     ("mi hijo se cayó y se pegó en la boca", TRAUMA),
     ("se me callo el diente de enfrente con el golpe", TRAUMA),
+    ("me golpearon en la boca", TRAUMA),
+    ("tengo la boca golpeada", TRAUMA),
+    ("hola, soy paciente nuevo, se me salió un diente", TRAUMA),
+    ("mi bebé se cayó y se le salió un diente", TRAUMA),
+    ("a mi hija se le zafó el diente", TRAUMA),
     # Trouble swallowing or breathing
     ("no puedo tragar", BREATHING),
     ("me cuesta respirar", BREATHING),
@@ -68,6 +73,13 @@ SHOULD_FIRE = [
     ("se me cierra la garganta", BREATHING),
     ("mi papá no puede tragar", BREATHING),
     ("me asfixio", BREATHING),
+    ("le falta el aire", BREATHING),
+    ("a mi hijo no le entra el aire", BREATHING),
+    ("se está ahogando", BREATHING),
+    ("se le está cerrando la garganta", BREATHING),
+    ("no le pasa la saliva", BREATHING),
+    ("tiene la garganta cerrada", BREATHING),
+    ("no puede pasar ni el agua", BREATHING),
 ]
 
 SHOULD_NOT_FIRE = [
@@ -92,6 +104,13 @@ SHOULD_NOT_FIRE = [
     "me duelen los dientes con los cambios de temperatura",
     "ya me salió la muela del juicio",
     "ya le salió el primer diente a mi bebé",
+    "se cayó la resina de la muela",
+    "no se pegó bien la resina del diente",
+    "me lastimé el labio con el bracket",
+    "se me zafó la corona del diente",
+    "tengo una bolita en el párpado",
+    "me salió una bolita en el labio",
+    "tengo una bolita en la lengua",
 ]
 
 
@@ -117,6 +136,20 @@ def test_a_burst_is_read_as_one_message() -> None:
 def test_a_signal_the_clinic_removed_no_longer_fires() -> None:
     without_trauma = [signal for signal in DEFAULT_SIGNALS if signal != TRAUMA]
     assert detect_urgency("me di un golpe en la boca", without_trauma) is None
+
+
+def test_trouble_breathing_cannot_be_turned_off_and_is_checked_first() -> None:
+    signals = active_signals([PAIN, TRAUMA])
+    assert signals == (BREATHING, PAIN, TRAUMA)
+    assert detect_urgency("no puedo respirar", signals) == BREATHING
+    assert detect_urgency("me duele mucho y no puedo respirar", active_signals(DEFAULT_SIGNALS)) == BREATHING
+
+
+def test_the_clinic_spelling_of_the_breathing_signal_is_kept() -> None:
+    assert active_signals([PAIN, "Dificultad para tragar o respirar"]) == (
+        "Dificultad para tragar o respirar",
+        PAIN,
+    )
 
 
 def test_a_signal_the_clinic_added_fires_as_written() -> None:

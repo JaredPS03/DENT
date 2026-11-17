@@ -48,8 +48,14 @@ MAX_REASON = 200
 MAX_SUMMARY = 600
 MAX_NAME = 120
 UNCONSENTED_SUMMARY = (
-    "El paciente no ha aceptado el aviso de privacidad, así que no se guardan detalles. "
-    "Revisa la conversación en la bandeja."
+    "El paciente no ha aceptado el aviso de privacidad: no se guardan detalles y lo que escribió se "
+    "borra en 24 h. Revisa la conversación en la bandeja."
+)
+UNCONSENTED_URGENT_REASON = "posible urgencia (la detectó el asistente)"
+UNCONSENTED_URGENT_SUMMARY = (
+    "Quiere: atención por una posible urgencia. Intentado: se le mandó el mensaje de urgencia. No "
+    "aceptó el aviso de privacidad: no se guardan detalles y lo que escribió se borra en 24 h. "
+    "Revisa la conversación y llámale o escríbele ya."
 )
 NO_CONSENT = (
     "El paciente no ha aceptado el aviso de privacidad: no puedes usar esta función. "
@@ -150,9 +156,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     _tool(
         "escalar_a_humano",
         "Pasa la conversación al equipo del consultorio y lo alerta. Obligatoria ante dolor fuerte, "
-        "sangrado, hinchazón, quejas o dudas clínicas, o si el paciente pide hablar con alguien. "
-        'Con prioridad "urgente" el sistema manda el mensaje de urgencia y termina el turno; con '
-        '"normal", después usa responder para decirle al paciente que el equipo le responderá pronto.',
+        "sangrado, hinchazón o quejas, o si el paciente pide hablar con alguien. Ante una duda "
+        "clínica, primero ofrece una valoración y úsala solo si el paciente prefiere que le conteste "
+        'alguien del consultorio. Con prioridad "urgente" el sistema manda el mensaje de urgencia y '
+        'termina el turno; con "normal", después usa responder para decirle al paciente que el '
+        "equipo le responderá; si el consultorio está cerrado, dile cuándo abre.",
         {
             "motivo": {**_TEXT, "description": "Por qué se escala, en pocas palabras."},
             "prioridad": {"type": "string", "enum": ["urgente", "normal"]},
@@ -377,8 +385,12 @@ class Tools:
             if self.state.profile.consented:
                 reason = _clip(request.motivo, MAX_REASON) or "Pedido por el asistente"
                 summary = _clip(request.resumen, MAX_SUMMARY) or "Sin resumen."
+            elif priority == "urgent":
+                # Without consent nothing the AI wrote about the patient is kept (no symptoms), but
+                # the team must know it is an urgency.
+                reason = UNCONSENTED_URGENT_REASON
+                summary = UNCONSENTED_URGENT_SUMMARY
             else:
-                # Without consent nothing the AI wrote about the patient is kept (no symptoms).
                 reason = "Pedido por el asistente"
                 summary = UNCONSENTED_SUMMARY
             self.state.escalation = await escalate(
@@ -394,8 +406,8 @@ class Tools:
             return {"escalado": True}
         return {
             "escalado": True,
-            "nota": "El equipo ya fue avisado. Usa responder para decirle al paciente que le "
-            "responderán pronto.",
+            "nota": "El equipo ya fue avisado. Usa responder para decirle al paciente que el equipo "
+            "le responderá; si el consultorio está cerrado, dile cuándo abre.",
         }
 
     async def responder(self, arguments: dict[str, Any]) -> dict[str, Any]:

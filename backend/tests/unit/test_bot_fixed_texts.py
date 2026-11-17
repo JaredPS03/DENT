@@ -48,8 +48,11 @@ def test_the_privacy_notice_carries_the_link_and_asks_for_consent() -> None:
 
 def test_declining_hands_the_chat_to_the_team() -> None:
     assert fixed.consent_declined(INFORMAL) == (
-        "Entendido. El equipo del consultorio te atenderá directamente por este medio."
+        "Entendido. El asistente ya no te escribirá; alguien del equipo de Clínica Dental Sonrisa "
+        "te responderá por aquí."
     )
+    assert "ya no le escribirá" in fixed.consent_declined(FORMAL)
+    assert "le responderá por aquí" in fixed.consent_declined(FORMAL)
 
 
 def test_the_reminder_that_rides_on_general_answers() -> None:

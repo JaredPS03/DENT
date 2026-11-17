@@ -11,6 +11,7 @@ from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
+import httpx
 import psycopg
 import pytest
 from psycopg_pool import AsyncConnectionPool
@@ -227,20 +228,55 @@ async def test_an_urgency_in_a_chat_a_person_took_only_alerts_the_team(
 
     await turn(ctx, db, phone, says(phone, "se me hincho el cachete"))
     await turn(ctx, db, phone, says(phone, "sigo con el cachete hinchado"))  # the same, still open
-    await turn(ctx, db, phone, says(phone, "y ya no puedo tragar"))  # breathing always alerts
+    await turn(ctx, db, phone, says(phone, "y ya no puedo tragar"))  # a new signal alerts
+    await turn(ctx, db, phone, says(phone, "sigo sin poder tragar"))  # breathing: not within 10 min
+    admin_url = os.environ.get("TEST_ADMIN_DATABASE_URL", LOCAL_ADMIN_DATABASE_URL)
+    async with await psycopg.AsyncConnection.connect(admin_url, autocommit=True) as admin:
+        await admin.execute(
+            "update public.escalations set created_at = created_at - interval '11 minutes'"
+            " where conversation_id = %s",
+            (conversation_id,),
+        )
+    await turn(ctx, db, phone, says(phone, "no puedo respirar bien"))  # breathing: again after 10 min
 
     assert to_patient(meta, phone) == []  # a person is in charge: nothing automatic to the patient
     assert model.calls == []
     escalations = await rows(
         db,
-        "select reason, summary like '%%no se le contestó%%' from public.escalations"
+        "select reason, summary like '%%Llámale o escríbele ya%%' from public.escalations"
         " where conversation_id = %s order by created_at",
         (conversation_id,),
     )
     assert escalations == [
         ("hinchazón de cara o cuello", True),
         ("dificultad para tragar o respirar", True),
+        ("dificultad para tragar o respirar", True),
     ]
+
+
+async def test_a_clinic_cannot_turn_off_trouble_breathing(
+    settings: Settings, db: Database, meta: FakeMeta, phone: str
+) -> None:
+    ctx = world(settings, db, meta)
+    admin_url = os.environ.get("TEST_ADMIN_DATABASE_URL", LOCAL_ADMIN_DATABASE_URL)
+    async with await psycopg.AsyncConnection.connect(admin_url, autocommit=True) as admin:
+        [signals] = await (
+            await admin.execute("select urgency_signals from public.clinics where id = %s", (CLINIC_A,))
+        ).fetchone() or [None]
+        await admin.execute(
+            "update public.clinics set urgency_signals = array['dolor fuerte'] where id = %s", (CLINIC_A,)
+        )
+        try:
+            conversation_id = await turn(ctx, db, phone, says(phone, "a mi hijo no le entra el aire"))
+        finally:
+            await admin.execute(
+                "update public.clinics set urgency_signals = %s where id = %s", (signals, CLINIC_A)
+            )
+
+    assert "911" in body_text(to_patient(meta, phone)[-1])
+    assert await rows(
+        db, "select reason, priority from public.escalations where conversation_id = %s", (conversation_id,)
+    ) == [("dificultad para tragar o respirar", "urgent")]
 
 
 async def test_the_ai_escalating_as_urgent_gets_the_fixed_urgency_message(
@@ -329,10 +365,14 @@ async def test_declining_hands_the_chat_to_the_team(
     conversation_id = await turn(ctx, db, phone, says(phone, "hola"))
     await turn(ctx, db, phone, taps(phone, CONSENT_DECLINE_ID, "No acepto"))
 
-    assert body_text(to_patient(meta, phone)[-1]).startswith("Entendido. El equipo del consultorio")
+    assert body_text(to_patient(meta, phone)[-1]).startswith("Entendido. El asistente ya no te escribirá")
     assert (await one(db, "select status from public.conversations where id = %s", (conversation_id,)))[
         0
     ] == "human"
+    # The message promises an answer from the team: the team is alerted, with no details.
+    assert await rows(
+        db, "select reason, priority from public.escalations where conversation_id = %s", (conversation_id,)
+    ) == [("no aceptó el aviso de privacidad", "normal")]
     assert (
         await rows(
             db,
@@ -509,6 +549,53 @@ async def test_the_bot_cannot_book_a_slot_the_patient_has_not_seen(
     assert "todavía no ha visto" in same_turn["content"]
     assert never_offered["is_error"]
     assert "no lo ofreciste" in never_offered["content"]
+    assert (
+        await rows(
+            db,
+            "select a.id from public.appointments a"
+            " join public.conversations c on c.patient_id = a.patient_id where c.id = %s",
+            (conversation_id,),
+        )
+        == []
+    )
+
+
+async def test_a_slot_shown_in_a_message_that_failed_cannot_be_booked(
+    settings: Settings, db: Database, meta: FakeMeta, phone: str
+) -> None:
+    await consenting_patient(db, phone)
+    tomorrow = clinic_today() + timedelta(days=1)
+    first_start: list[str] = []
+    model = ScriptedModel(
+        tool_use(
+            "buscar_disponibilidad",
+            servicio="Limpieza",
+            desde=tomorrow.isoformat(),
+            hasta=(tomorrow + timedelta(days=7)).isoformat(),
+            turno="cualquiera",
+        ),
+        _offer_two,
+        lambda _messages: tool_use("agendar_cita", servicio="Limpieza", inicio=first_start[0]),
+        answer("¿Cuál horario te acomoda?"),
+    )
+    ctx = world(settings, db, meta, model)
+    meta.script.append(
+        httpx.Response(400, json={"error": {"code": 131026, "message": "Message undeliverable"}})
+    )
+    conversation_id = await turn(ctx, db, phone, says(phone, "quiero una limpieza"))
+    [start] = await one(
+        db,
+        "select starts_at from public.offered_slots where conversation_id = %s and shown_at is not null"
+        " order by starts_at limit 1",
+        (conversation_id,),
+    )
+    first_start.append(start.isoformat())
+
+    await turn(ctx, db, phone, says(phone, "el primero"))  # the patient never saw it
+
+    refused = last_tool_result(model.calls[3]["messages"])
+    assert refused["is_error"]
+    assert "todavía no ha visto" in refused["content"]
     assert (
         await rows(
             db,
@@ -833,6 +920,28 @@ async def test_without_consent_an_escalation_keeps_nothing_the_ai_wrote(
         db, "select reason, summary from public.escalations where conversation_id = %s", (conversation_id,)
     )
     assert "sangr" not in f"{reason} {summary}".lower()
+
+
+async def test_without_consent_an_urgency_the_ai_found_still_tells_the_team_it_is_urgent(
+    settings: Settings, db: Database, meta: FakeMeta, phone: str
+) -> None:
+    model = ScriptedModel(
+        tool_use(
+            "escalar_a_humano", motivo="ronchas tras la anestesia", prioridad="urgente",
+            resumen="Le salieron ronchas después de la anestesia.",
+        ),
+    )  # fmt: skip
+    ctx = world(settings, db, meta, model)
+    await turn(ctx, db, phone, says(phone, "hola"))
+    conversation_id = await turn(ctx, db, phone, says(phone, "me salieron ronchas por la anestesia de ayer"))
+
+    reason, summary = await one(
+        db, "select reason, summary from public.escalations where conversation_id = %s", (conversation_id,)
+    )
+    assert reason == "posible urgencia (la detectó el asistente)"
+    assert "se le mandó el mensaje de urgencia" in summary
+    assert "roncha" not in f"{reason} {summary}".lower()
+    assert "911" in body_text(to_patient(meta, phone)[-1])
 
 
 async def test_an_alert_to_someone_without_a_phone_does_not_hold_back_the_team(

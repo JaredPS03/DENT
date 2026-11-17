@@ -106,6 +106,9 @@ def test_a_list_of_plain_options() -> None:
         ({"texto": "Paga tu anticipo en bit.ly/pago-sonrisa"}, "enlace"),
         ({"texto": "Entra a pagos-sonrisa.com/pagar"}, "enlace"),
         ({"texto": "Escríbenos a citas@otro-correo.mx"}, "enlace"),
+        ({"texto": "Visita dr.malicioso.com"}, "enlace"),
+        ({"texto": "Paga en Dr.Link/pago"}, "enlace"),
+        ({"texto": "Aviso: https://consultorio.example/x y pagos.example/aviso.pdf"}, "enlace"),
     ],
 )
 def test_what_breaks_the_rules_goes_back_to_the_ai_with_the_reason(
@@ -119,11 +122,18 @@ def test_links_of_the_clinic_are_allowed() -> None:
     message = reply(texto="Estamos aquí: https://maps.app.goo.gl/abc123")
     assert message.payload["type"] == "text"
     assert reply(texto="O búscanos como maps.app.goo.gl/abc123").payload["type"] == "text"
+    assert reply(texto="Aviso:\nhttps://consultorio.example/docs/aviso.pdf").payload["type"] == "text"
 
 
 @pytest.mark.parametrize(
     "text",
-    ["Te esperamos a las 9:00 a.m. con la Dra. Laura.", "Son 1.5 horas aprox.", "Abrimos de 4.30 pm a 7 pm."],
+    [
+        "Te esperamos a las 9:00 a.m. con la Dra. Laura.",
+        "Son 1.5 horas aprox.",
+        "Abrimos de 4.30 pm a 7 pm.",
+        "Te atiende la Dra.Laura el jueves.",
+        "Con el Lic.Ramírez de recepción.",
+    ],
 )
 def test_ordinary_text_with_dots_is_not_taken_for_a_link(text: str) -> None:
     assert reply(texto=text).payload["type"] == "text"

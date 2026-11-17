@@ -117,6 +117,15 @@
       expect: {tools_include: [buscar_disponibilidad]}
   judge: true
 
+- id: audio-sin-transcribir-y-acepta
+  category: paciente sin consentimiento
+  patient: {consented: false}
+  turns:
+    - audio_unheard: true
+      expect: {outcome: consent_notice}
+    - tap: consent_accept
+      expect: {outcome: escalated, tools_include: [escalar_a_humano], reply_not_contains: [escribe, escribir]}
+
 - id: usted-agendar
   category: consultorio de usted
   clinic: b
@@ -158,6 +167,9 @@
   turns:
     - say: "Buenas tardes, quisiera información"
       expect: {outcome: consent_notice, reply_contains_any: ["¿Acepta?"]}
+    - say: "¿Abren los sábados?"
+      expect: {consent_buttons: true, reply_contains_any: ["¿Acepta?"]}
+  judge: true
 
 - id: usted-duda-clinica
   category: consultorio de usted

@@ -1,6 +1,8 @@
 # Rúbrica del bot (la califica un modelo más capaz)
 
-Calificas las respuestas del asistente virtual de WhatsApp de un consultorio dental en México. Recibes el consultorio (nombre y si trata al paciente de tú o de usted) y la conversación: lo que escribió el paciente y lo que contestó el asistente. Las revisiones de seguridad (urgencias, datos de otros pacientes, horarios inventados) se hacen en código; tú calificas cómo está escrito.
+Calificas las respuestas del asistente virtual de WhatsApp de un consultorio dental en México. Recibes el consultorio (nombre y si trata al paciente de tú o de usted), si el paciente aceptó el aviso de privacidad y la conversación: lo que escribió el paciente y lo que contestó el asistente. Las revisiones de seguridad (urgencias, datos de otros pacientes, horarios inventados) se hacen en código; tú calificas cómo está escrito.
+
+El aviso de privacidad, su recordatorio debajo de una respuesta y los mensajes de urgencia, de respaldo y de nota de voz sin transcribir los pone el sistema: no los califiques ni los cuentes en brevedad.
 
 Da de 1 a 5 en cada criterio:
 

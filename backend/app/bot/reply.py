@@ -31,6 +31,8 @@ OPTION_ID_PREFIX = "opcion:"
 _LINK = re.compile(r"(?i)\b(?:https?://|www\.)[^\s<>\"']+")
 # A bare domain ("bit.ly/pago", "pagos-sonrisa.com"): WhatsApp turns it into a link too.
 _HOST = re.compile(r"(?i)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}\b")
+# A title glued to a name ("Dra.Laura") is not a domain: capitals as written, no path after it.
+_TITLE_AND_NAME = re.compile(r"\b(?:Dra?|Sra?|Srta|Lic|Ing|Mtra?|Profa?)\.[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\b(?![./])")
 
 
 def consent_accept_id(version: str) -> str:
@@ -177,7 +179,9 @@ def _check_links(body: str, allowed_hosts: frozenset[str]) -> None:
         (urlsplit(link if "://" in link else f"https://{link}").hostname or "")
         for link in _LINK.findall(body)
     }
-    hosts |= {match.group(0) for match in _HOST.finditer(body)}
+    # Bare domains, outside the links already read: "aviso.pdf" in a link's path is not a domain.
+    rest = _TITLE_AND_NAME.sub(" ", _LINK.sub(" ", body))
+    hosts |= {match.group(0) for match in _HOST.finditer(rest)}
     for host in hosts:
         if host.lower() not in allowed_hosts:
             raise ReplyRejectedError(
