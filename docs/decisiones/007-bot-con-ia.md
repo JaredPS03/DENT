@@ -1,0 +1,70 @@
+# 007 · El bot con IA: urgencias, consentimiento, herramientas, respaldo y evaluaciones (hito 1C)
+
+- **Estado:** aceptada
+- **Fecha:** 2026-11-17
+
+## Contexto
+
+El 1C reemplaza el bot de eco del 1B por el asistente con IA. La especificación y `.claude/rules/bot-ia.md` fijan el orden del turno, las herramientas y sus reglas. Dejaban abiertas tres cosas que Jared decidió al aprobar el plan:
+- **El SDK oficial `anthropic`**, dependencia nueva aprobada.
+- **Una urgencia con el chat en pausa o tomado** solo alerta al equipo, sin escribirle al paciente.
+- **Sin "Acepto"**, el bot contesta dudas generales sin guardar síntomas y repite el aviso.
+
+## Decisión
+
+**El turno**, en este orden (`app/bot/orchestrator.py`):
+1. **Bot apagado, en pausa o chat tomado:** el mensaje queda en la bandeja. Si trae una señal de urgencia, se abre un escalado urgente y se alerta al equipo, una vez mientras siga abierto (2 h).
+2. **Filtro de urgencia determinista** (`app/bot/urgency.py`):
+   - Toma la lista de señales del consultorio. Cada señal por defecto tiene reglas de frases cercanas ("me duele" cerca de "mucho"). Las señales que agrega el consultorio se buscan tal cual.
+   - Perdona acentos, mayúsculas, letras repetidas y las confusiones comunes (h, z/s, c/s, v/b).
+   - No dispara con preguntas sobre un procedimiento ("¿la limpieza duele?", "¿me va a doler la extracción?") ni con "si me duele…".
+   - Si coincide: escalado urgente, mensaje fijo con el 911 y alerta. Va antes que el aviso de privacidad y que la IA.
+3. **Puerta de consentimiento:**
+   - Primer mensaje: el aviso con Acepto y No acepto.
+   - **Acepto:** guarda la prueba en `consents` (versión del aviso y mensaje). El turno sigue y la IA contesta lo que el paciente había escrito.
+   - **No acepto:** el chat pasa a una persona.
+   - **Sin aceptar:** la IA solo da información general, sin agenda, y el código agrega el aviso y sus botones a su mensaje.
+   - Lo que escribió quien no aceptó (texto, transcripciones y archivos) se borra a las 24 h. El trabajo de borrado vuelve por lo más reciente.
+4. **La IA:** `claude-haiku-5-5`, sin `thinking` ni `effort`, o sea con los valores por defecto del modelo. El prompt sale de `docs/prompt-del-bot.md`, copiado a `app/bot/prompts/v1.0.md`; una prueba vigila que las dos copias coincidan.
+   - **Orden para la caché:** herramientas, la parte fija del consultorio con la marca de caché, y al final la hora y el paciente.
+   - **Lo que recibe:** los últimos 20 mensajes del último día y solo el primer nombre del paciente. El texto del paciente va siempre dentro de sus etiquetas, con `<` y `>` cambiados por caracteres parecidos.
+5. **Herramientas** (`app/bot/tools.py`): las 8 de la Fase 1 más `responder`, en modo estricto, con todas las propiedades obligatorias.
+   - Cada llamada se valida en código.
+   - El consultorio y el paciente salen del turno.
+   - Una cita solo se toca si es una cita próxima de ese paciente.
+   - **Los horarios** de `buscar_disponibilidad` se guardan por conversación (`offered_slots`). `agendar_cita` y `reagendar_cita` solo aceptan un horario ofrecido en un turno anterior: el paciente tuvo que verlo y elegirlo, así que "nunca agendar sin confirmación" queda en código.
+   - **`responder`** pone la etiqueta como título del botón y el inicio exacto, con zona, como id. Rechaza enlaces que no sean del consultorio. Con más de 3 opciones arma una lista.
+6. **Respaldo:**
+   - Topes: 6 llamadas a herramientas, 25 s por llamada al modelo y 60 s por turno.
+   - Si la API falla, el modelo se niega, la respuesta sale cortada, termina dos veces sin `responder`, pasa del tope o se acaba el tiempo, se manda el mensaje fijo de respaldo y la conversación pasa a una persona con un resumen generado por el código.
+   - Una falla de nuestros sistemas reintenta el turno. En el último intento también termina en el respaldo.
+7. **Alertas al equipo** (`app/jobs/bot_jobs.py`):
+   - Es la plantilla `alerta_equipo` desde el número propio de Axon (`AXON_PHONE_NUMBER_ID`), a cada usuario con teléfono de alertas.
+   - Lleva el nombre del usuario, el del consultorio, la prioridad y el enlace a la conversación; nunca datos de salud.
+   - Sale como máximo una vez por persona: se marca antes de llamar a Meta (`team_alerts`).
+8. **Registro:** cada turno queda en `bot_turns` con tokens (incluida la caché), latencia, herramientas, modelo, versión del prompt, cómo terminó y el costo estimado (precios en `app/bot/costs.py`). Cada mensaje del bot guarda su versión del prompt.
+9. **El cliente fija la URL de la API de Anthropic.** El SDK seguiría `ANTHROPIC_BASE_URL`, y los mensajes de pacientes solo deben ir a Anthropic.
+10. **Evaluaciones** (`backend/tests/evals/`):
+    - 63 casos en YAML. Cada uno corre el turno real contra la base local, con Meta simulado y el reloj real; los casos no dependen de fechas fijas.
+    - Revisiones en código, y rúbrica de tono y claridad calificada por `claude-sonnet-5-5`.
+    - Urgencias, inyección y dudas clínicas no pueden fallar.
+
+## Alternativas
+
+- **Herramientas distintas sin consentimiento:** cambiaría el inicio de la petición y rompería la caché. Se mandan siempre las mismas y el código rechaza las de agenda.
+- **Confiar en el prompt para no agendar sin confirmación:** se descartó; la regla vive en código con los horarios ofrecidos.
+- **Una tabla de reglas de urgencia editable por el consultorio:** se pospone. Hoy el consultorio activa o quita señales y agrega frases propias.
+- **Llamadas HTTP directas en lugar del SDK:** más código propio que mantener; Jared eligió el SDK.
+
+## Consecuencias
+
+- **Dependencia nueva aprobada:** `anthropic`. PyYAML, que usan las evaluaciones, ya llega con `fastapi[standard]`; falta decidir si se declara aparte.
+- **Variables nuevas:** `ANTHROPIC_API_KEY`, `BOT_MODEL`, `BOT_PROMPT_VERSION` y `AXON_PHONE_NUMBER_ID`. Se quitó `ECHO_BOT_ENABLED`.
+- **Arranque del worker:** fuera de desarrollo no arranca sin llave o sin el prompt de la versión configurada. En desarrollo, sin llave filtra urgencias y pide el consentimiento, y lo demás queda en la bandeja.
+- **Antes de pacientes reales:**
+  - aprobar `alerta_equipo` en Meta con un botón de enlace al panel (el sufijo es el id de la conversación);
+  - revisar con un abogado el aviso de privacidad y el borrado a las 24 h;
+  - correr las evaluaciones con la llave.
+- **Para hitos siguientes:**
+  - **1D:** tope diario de transcripciones por consultorio, avisos de mensajes sin respuesta y limpieza de los horarios ofrecidos viejos.
+  - **1E:** que el dentista ajuste los mensajes fijos y vea los escalados en el panel.

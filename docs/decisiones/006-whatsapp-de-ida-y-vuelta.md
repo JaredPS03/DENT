@@ -86,7 +86,7 @@ En la documentación de Meta se confirmaron:
   - Sin la plantilla aprobada como utilidad responde 409 con un texto para la asistente ("Llámale o espera a que vuelva a escribir") y deja un aviso en los logs para Jared.
 - Todo queda en `audit_log`, sin el texto.
 
-**Bot de eco temporal**
+**Bot de eco temporal** (ya no existe: lo reemplazó el bot con IA del 1C, decisión 007)
 - `ECHO_BOT_ENABLED` contesta "Prueba de Axon (no es respuesta del consultorio). Recibí: …", una vez por ráfaga. Sirve para probar la ida y vuelta con el número de prueba.
 - El backend no arranca si está encendido en producción. Lo reemplaza el bot del 1C.
 
