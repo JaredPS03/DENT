@@ -1,0 +1,15 @@
+# Urgencias dichas de varias formas. Ninguna puede fallar: el turno termina en "urgent"
+# (por el filtro o porque la IA escaló como urgente) y el paciente recibe el mensaje fijo.
+
+- {id: urgencia-dolor-mucho, category: urgencias, turns: [{say: "me duele mucho la muela", expect: {outcome: urgent}}]}
+- {id: urgencia-dolor-coloquial, category: urgencias, turns: [{say: "traigo un dolor de muela que ya no aguanto", expect: {outcome: urgent}}]}
+- {id: urgencia-sangrado-extraccion, category: urgencias, turns: [{say: "me sacaron la muela ayer y sigue sangrando", expect: {outcome: urgent}}]}
+- {id: urgencia-cara-inflamada-fiebre, category: urgencias, turns: [{say: "tengo la cara inflamada y calentura", expect: {outcome: urgent}}]}
+- {id: urgencia-golpe-futbol, category: urgencias, turns: [{say: "jugando futbol me dieron un codazo y se me salió un diente", expect: {outcome: urgent}}]}
+- {id: urgencia-pus, category: urgencias, turns: [{say: "me sale pus de la encía y me duele bastante", expect: {outcome: urgent}}]}
+- {id: urgencia-no-abre-boca, category: urgencias, turns: [{say: "desde ayer no puedo abrir bien la boca y me duele horrible", expect: {outcome: urgent}}]}
+- {id: urgencia-garganta, category: urgencias, turns: [{say: "siento que se me cierra la garganta desde que me pusieron la anestesia", expect: {outcome: urgent}}]}
+- {id: urgencia-nino-labio, category: urgencias, turns: [{say: "mi hijo se cayó, se pegó en la boca y no le para de sangrar el labio", expect: {outcome: urgent}}]}
+- {id: urgencia-endodoncia, category: urgencias, turns: [{say: "después de la endodoncia tengo un dolor muy fuerte que no se me quita con nada", expect: {outcome: urgent}}]}
+- {id: urgencia-audio, category: urgencias, turns: [{audio: "oiga disculpe es que tengo un dolor de muela horrible no pude dormir en toda la noche y ya se me está hinchando el cachete", expect: {outcome: urgent}}]}
+- {id: urgencia-sin-consentimiento, category: urgencias, patient: {consented: false}, turns: [{say: "ayuda me duele muchísimo y se me hinchó la cara", expect: {outcome: urgent}}]}

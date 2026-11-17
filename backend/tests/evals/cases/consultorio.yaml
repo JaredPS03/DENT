@@ -1,0 +1,134 @@
+# Datos del consultorio, precios, pedir una persona, faltas de ortografía y el aviso de privacidad.
+
+- id: precio-registrado
+  category: precios
+  turns:
+    - say: "¿cuánto cuesta la limpieza?"
+      expect: {reply_contains_any: ["600"]}
+  judge: true
+
+- id: precio-no-visible
+  category: precio no registrado
+  turns:
+    - say: "¿cuánto cuesta una resina?"
+      expect: {reply_not_contains: ["$"], reply_contains_any: [valoración, doctora, consultorio, depende, equipo]}
+
+- id: precio-implante
+  category: precio no registrado
+  turns:
+    - say: "cuánto cuesta un implante?"
+      expect: {reply_not_contains: ["$"]}
+  judge: true
+
+- id: precio-extraccion
+  category: precio no registrado
+  turns:
+    - say: "y la extracción de una muela en cuánto sale?"
+      expect: {reply_not_contains: ["$"]}
+
+- id: info-direccion
+  category: datos del consultorio
+  turns:
+    - say: "¿dónde están ubicados?"
+      expect: {reply_contains_any: ["Calle Ficticia", "maps.example.com"]}
+
+- id: info-pagos
+  category: datos del consultorio
+  turns:
+    - say: "¿aceptan tarjeta?"
+      expect: {reply_contains_any: [tarjeta]}
+
+- id: info-horario
+  category: datos del consultorio
+  turns:
+    - say: "¿a qué hora abren los sábados?"
+      expect: {reply_contains_any: ["9", "nueve"]}
+
+- id: pedir-persona
+  category: pasar a humano
+  turns:
+    - say: "quiero hablar con una persona, no con un robot"
+      expect: {tools_include: [escalar_a_humano], outcome: [escalated, urgent]}
+  judge: true
+
+- id: queja
+  category: pasar a humano
+  turns:
+    - say: "estoy muy molesto, la vez pasada me cobraron de más y nadie me contesta"
+      expect: {tools_include: [escalar_a_humano]}
+
+- id: ortografia-cita
+  category: faltas de ortografía y coloquial
+  turns:
+    - say: "kiero sita pa limpiesa xfa"
+      expect: {tools_include: [buscar_disponibilidad]}
+
+- id: ortografia-sabado
+  category: faltas de ortografía y coloquial
+  turns:
+    - say: "q orario tienen el sabado?"
+      expect: {reply_contains_any: ["9", "nueve", "2", "dos"]}
+
+- id: coloquial-precio
+  category: faltas de ortografía y coloquial
+  turns:
+    - say: "oiga y cuánto sale la limpiesa?"
+      expect: {reply_contains_any: ["600"]}
+
+- id: coloquial-ocupo
+  category: faltas de ortografía y coloquial
+  turns:
+    - say: "q onda ocupo cita pa q me revisen una muela q se me picó"
+      expect: {tools_exclude: [agendar_cita]}
+  judge: true
+
+- id: sin-consentimiento-aviso
+  category: paciente sin consentimiento
+  patient: {consented: false}
+  turns:
+    - say: "hola quiero una cita para limpieza"
+      expect: {outcome: consent_notice, model_calls: 0, reply_contains_any: ["aviso de privacidad"]}
+
+- id: sin-consentimiento-pregunta-general
+  category: paciente sin consentimiento
+  patient: {consented: false}
+  turns:
+    - say: "hola"
+      expect: {outcome: consent_notice}
+    - say: "¿dónde están?"
+      expect: {reply_contains_any: ["Calle Ficticia", "maps.example.com"], consent_buttons: true}
+
+- id: sin-consentimiento-no-agenda
+  category: paciente sin consentimiento
+  patient: {consented: false}
+  turns:
+    - say: "buenas"
+      expect: {outcome: consent_notice}
+    - say: "agéndame una limpieza mañana a las 10"
+      expect: {tools_exclude: [agendar_cita], booked: false, consent_buttons: true}
+
+- id: acepta-y-retoma
+  category: paciente sin consentimiento
+  patient: {consented: false}
+  turns:
+    - say: "hola quiero una cita para valoración"
+      expect: {outcome: consent_notice}
+    - tap: consent_accept
+      expect: {tools_include: [buscar_disponibilidad]}
+  judge: true
+
+- id: usted-agendar
+  category: consultorio de usted
+  clinic: b
+  turns:
+    - say: "Buenas tardes, quisiera una cita para limpieza"
+      expect: {tools_include: [buscar_disponibilidad]}
+  judge: true
+
+- id: usted-fuera-de-tema
+  category: consultorio de usted
+  clinic: b
+  turns:
+    - say: "¿me recomienda un buen restaurante?"
+      expect: {reply_contains_any: [consultorio, cita]}
+  judge: true

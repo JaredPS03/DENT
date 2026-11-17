@@ -1,0 +1,142 @@
+# Agendar, reagendar y cancelar. Consultorio A (Clínica Dental Sonrisa, tú) salvo que diga otra cosa.
+# Cada turno: say (texto), audio (transcripción de una nota de voz), burst (varios mensajes
+# seguidos) o tap (first_slot o consent_accept). expect: lo que se revisa en código.
+
+- id: agendar-limpieza-texto
+  category: agendar por texto
+  turns:
+    - say: "Hola, quiero una cita para limpieza"
+      expect: {tools_include: [buscar_disponibilidad], offers_slots: true}
+  judge: true
+
+- id: agendar-valoracion-jueves-tarde
+  category: agendar por texto
+  turns:
+    - say: "me pueden dar cita para una valoración el jueves en la tarde?"
+      expect: {tools_include: [buscar_disponibilidad]}
+  judge: true
+
+- id: agendar-sin-servicio
+  category: agendar por texto
+  turns:
+    - say: "quiero sacar una cita"
+      expect: {reply_contains_any: [limpieza, valoración, servicio, "qué tipo", "para qué"]}
+  judge: true
+
+- id: agendar-resina-la-otra-semana
+  category: agendar por texto
+  turns:
+    - say: "ocupo cita para una resina la otra semana en la mañana"
+      expect: {tools_include: [buscar_disponibilidad]}
+
+- id: agendar-de-principio-a-fin
+  category: agendar por texto
+  turns:
+    - say: "Buenas, me gustaría agendar una limpieza esta semana o la que sigue"
+      expect: {tools_include: [buscar_disponibilidad], offers_slots: true}
+    - tap: first_slot
+      expect: {tools_include: [agendar_cita], allow_booking: true, booked: true}
+  judge: true
+
+- id: agendar-con-nombre
+  category: agendar por texto
+  turns:
+    - say: "Hola, me llamo Juan Ejemplo y quiero una cita de valoración"
+      expect: {tools_include: [registrar_paciente]}
+
+- id: agendar-audio-limpieza
+  category: agendar por audio
+  turns:
+    - audio: "hola buenas tardes oiga quería ver si me pueden dar cita para una limpieza esta semana de preferencia en la tarde"
+      expect: {tools_include: [buscar_disponibilidad], offers_slots: true}
+  judge: true
+
+- id: agendar-audio-de-principio-a-fin
+  category: agendar por audio
+  turns:
+    - audio: "qué tal buen día quisiera una valoración porque me quiero poner brackets a la hija cuando tengan espacio"
+      expect: {tools_include: [buscar_disponibilidad], offers_slots: true}
+    - tap: first_slot
+      expect: {tools_include: [agendar_cita], allow_booking: true, booked: true}
+
+- id: agendar-audio-titubeos
+  category: agendar por audio
+  turns:
+    - audio: "eh sí este bueno es que quería este una cita para eh limpieza pero que sea mmm en la mañana si se puede"
+      expect: {tools_include: [buscar_disponibilidad]}
+
+- id: agendar-audio-pide-hora
+  category: agendar por audio
+  turns:
+    - audio: "oiga y para el viernes tiene algo como a las cinco para una limpieza"
+      expect: {tools_include: [buscar_disponibilidad], reply_not_contains: ["escríbeme", "escribe tu", "mejor escribe"]}
+
+- id: reagendar-cita
+  category: reagendar
+  patient: {appointment: Limpieza}
+  turns:
+    - say: "necesito cambiar mi cita, no voy a poder ir"
+      expect: {tools_include: [buscar_disponibilidad], offers_slots: true}
+    - tap: first_slot
+      expect: {tools_include: [reagendar_cita], allow_booking: true, rescheduled: true}
+  judge: true
+
+- id: reagendar-otro-dia
+  category: reagendar
+  patient: {appointment: Valoración}
+  turns:
+    - say: "me la puedes mover para la próxima semana?"
+      expect: {tools_include: [buscar_disponibilidad]}
+
+- id: reagendar-sin-cita
+  category: reagendar
+  turns:
+    - say: "quiero cambiar mi cita del martes"
+      expect: {tools_exclude: [reagendar_cita], reply_contains_any: ["no tienes", "no encuentro", "no veo", "no hay", "ninguna cita"]}
+
+- id: cancelar-cita
+  category: cancelar
+  patient: {appointment: Limpieza}
+  turns:
+    - say: "quiero cancelar mi cita, ya no la necesito"
+      expect: {tools_include: [cancelar_cita], cancelled: true}
+  judge: true
+
+- id: cancelar-por-viaje
+  category: cancelar
+  patient: {appointment: Valoración}
+  turns:
+    - say: "cancélame la cita porfa, salgo de viaje"
+      expect: {tools_include: [cancelar_cita], cancelled: true}
+
+- id: cancelar-sin-cita
+  category: cancelar
+  turns:
+    - say: "cancela mi cita"
+      expect: {tools_exclude: [cancelar_cita], reply_contains_any: ["no tienes", "no encuentro", "no veo", "no hay", "ninguna cita"]}
+
+- id: sin-horarios-domingo
+  category: sin horarios disponibles
+  turns:
+    - say: "tienen cita para limpieza este domingo?"
+      expect: {reply_contains_any: [domingo, cerrado, "no atendemos", "no abrimos", "no hay", "otro día", "lunes", sábado]}
+  judge: true
+
+- id: sin-horarios-hoy-noche
+  category: sin horarios disponibles
+  turns:
+    - say: "me puedes atender hoy a las 11 de la noche?"
+      expect: {tools_exclude: [agendar_cita], reply_contains_any: ["no", "horario", "otro"]}
+
+- id: rafaga-cita
+  category: ráfagas
+  turns:
+    - burst: ["hola", "quiero cita", "para limpieza", "de preferencia en la tarde"]
+      expect: {tools_include: [buscar_disponibilidad], single_reply: true}
+  judge: true
+
+- id: rafaga-pregunta
+  category: ráfagas
+  turns:
+    - burst: ["buenas", "una pregunta", "aceptan tarjeta?"]
+      expect: {single_reply: true, reply_contains_any: [tarjeta]}

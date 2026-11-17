@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 # One answer is short: thinking plus a tool call fits with room to spare.
 MAX_TOKENS = 8000
 CALL_TIMEOUT_SECONDS = 25.0
+# Fixed on purpose: the SDK would otherwise follow ANTHROPIC_BASE_URL, and patients' messages must
+# only ever reach Anthropic's API.
+API_BASE_URL = "https://api.anthropic.com"
 
 
 class ModelUnavailableError(Exception):
@@ -67,6 +70,7 @@ class ClaudeModel:
         # The key is passed explicitly: the SDK must not pick up another credential of the host.
         self._client = client or anthropic.AsyncAnthropic(
             api_key=settings.anthropic_api_key.get_secret_value(),
+            base_url=API_BASE_URL,
             max_retries=1,
             timeout=CALL_TIMEOUT_SECONDS,
         )
