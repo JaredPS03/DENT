@@ -442,6 +442,31 @@ async def test_with_the_bot_off_nothing_a_new_patient_writes_is_erased(
     assert await queued_count(db, {"kind": "erase_unconsented", "conversation_id": str(conversation_id)}) == 0
 
 
+async def test_without_a_link_to_the_notice_nothing_is_erased(
+    settings: Settings, db: Database, meta: FakeMeta, phone: str
+) -> None:
+    ctx = world(settings, db, meta)
+    admin_url = os.environ.get("TEST_ADMIN_DATABASE_URL", LOCAL_ADMIN_DATABASE_URL)
+    async with await psycopg.AsyncConnection.connect(admin_url, autocommit=True) as admin:
+        cursor = await admin.execute(
+            "select privacy_notice_url from public.clinics where id = %s", (CLINIC_A,)
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        notice_url = row[0]
+        await admin.execute("update public.clinics set privacy_notice_url = null where id = %s", (CLINIC_A,))
+        try:
+            conversation_id = await turn(ctx, db, phone, says(phone, "hola, quiero una cita"))
+        finally:
+            await admin.execute(
+                "update public.clinics set privacy_notice_url = %s where id = %s", (notice_url, CLINIC_A)
+            )
+
+    # The bot could not show the notice, so the clinic keeps its inbox as it always did.
+    assert to_patient(meta, phone) == []
+    assert await queued_count(db, {"kind": "erase_unconsented", "conversation_id": str(conversation_id)}) == 0
+
+
 async def test_a_notice_shown_long_ago_does_not_erase_what_comes_with_the_bot_off(
     settings: Settings, db: Database, meta: FakeMeta, phone: str
 ) -> None:

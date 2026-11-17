@@ -111,7 +111,8 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915 - the steps of 
     # but only if the bot answers this chat or showed the notice in the last 24 h: with the bot
     # off, or without a notice to show, the clinic keeps its inbox as it always did.
     noticed = requested_at is not None and now - requested_at < CONSENT_WINDOW
-    erase_later = not profile.consented and bool(clinic.notice_version) and (bot_on or noticed)
+    has_notice = bool(clinic.notice_url and clinic.notice_version)
+    erase_later = not profile.consented and has_notice and (bot_on or noticed)
 
     async def finish(
         reply: BotReply | None,

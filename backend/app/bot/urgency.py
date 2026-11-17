@@ -96,11 +96,14 @@ _HIT_PLACES = (*_TEETH, *_SOFT_PLACES)
 _PROSTHESES = _phrases(
     "resina", "calza", "corona", "bracket", "brackets", "protesis", "placa", "puente", "funda", "amalgama",
 )  # fmt: skip
-# The prosthesis as what fell or got stuck, right next to the verb: "se cayó la resina".
-_THE_PROSTHESIS = _phrases(
-    "la resina", "la calza", "la corona", "el bracket", "los brackets", "la protesis", "la placa",
-    "el puente", "la funda", "la amalgama",
-)  # fmt: skip
+# The prosthesis as what fell, broke or got stuck, right next to the verb: "se cayó la resina",
+# "la corona rota". Without an article it is what the patient wears: "traigo brackets, se me rompió
+# un diente" is a broken tooth.
+_THE_PROSTHESIS = tuple(
+    (article, *prosthesis)
+    for article in normalize("el la los las un una mi mis su sus").split()
+    for prosthesis in _PROSTHESES
+)
 # Questions about a procedure, not a symptom: "¿le duele mucho la extracción?".
 _PROCEDURES = _phrases(
     "la extraccion", "la limpiesa", "la endodonsia", "la anestesia", "la inyeccion", "el piquete",
@@ -109,12 +112,23 @@ _PROCEDURES = _phrases(
 )  # fmt: skip
 # Someone in general, not a patient: "¿a los niños les duele mucho?".
 _ANYONE = _phrases(
-    "a los ninos", "a las ninas", "a un nino", "a una nina", "a los bebes", "a la gente", "a las personas",
-    "a los pacientes", "a todos",
+    "a los ninos", "a las ninas", "a los bebes", "a la gente", "a las personas", "a los pacientes",
+    "a todos",
 )  # fmt: skip
+# "A un niño" only counts right after the pain: "¿le duele mucho a un niño la extracción?" asks,
+# "voy a llevar a un niño que le duele mucho la muela" is an emergency.
+_ANY_CHILD = _phrases("a un nino", "a una nina")
+# A blow, or what the child was doing when it happened: parents say "jugando futbol", not "un golpe".
 _BLOWS = _phrases(
     "golpe*", "me pegue", "me pegaron", "le pegaron", "se pego", "me cai", "se cayo", "caida", "accidente",
     "choque", "chocamos", "balonaso", "pelotaso", "patada", "codaso", "tropes*", "se resbalo",
+    "jugando", "jugaba", "jugar", "futbol", "fut", "partido", "recreo", "bici*", "patin*", "columpio*",
+    "pelea*", "se peleo",
+)  # fmt: skip
+# After one of these, a swollen throat can be an infection that spreads; with a cold it is not.
+_SURGERIES = _phrases(
+    "me sacaron", "le sacaron", "extraccion", "cirugia", "me operaron", "le operaron", "operacion",
+    "implante*", "endodoncia",
 )  # fmt: skip
 
 _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
@@ -156,7 +170,7 @@ _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
             gap=3,
             # Only right next to the pain: "a mi hijo le duele mucho, ¿atienden a los niños?" fires.
             unless_after=(*_HYPOTHETICAL, *_ANYONE),
-            unless_then=(*_PROCEDURES, *_ANYONE),
+            unless_then=(*_PROCEDURES, *_ANYONE, *_ANY_CHILD),
         ),
         _Rule(
             first=_phrases("dolor"),
@@ -245,6 +259,13 @@ _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
             second=tuple(place for place in _FACE if place != ("garganta",)),
             gap=4,
             either_order=True,
+        ),
+        _Rule(
+            first=_phrases("inflam*"),
+            second=_phrases("garganta"),
+            gap=4,
+            either_order=True,
+            only_with=_SURGERIES,
         ),
         _Rule(
             first=_phrases("bola", "bolita", "abultad*", "deformad*"),
@@ -356,7 +377,8 @@ _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
             gap=3,
             either_order=True,
             unless_anywhere=_phrases("de leche"),
-            unless_near=_PROSTHESES,
+            unless_near=_THE_PROSTHESIS,
+            near=0,
         ),
         # A tooth that came out: "se me salió" is a tooth lost, "me salió" is one growing in.
         _Rule(

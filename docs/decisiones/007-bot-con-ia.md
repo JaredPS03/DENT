@@ -45,7 +45,7 @@ El 1C reemplaza el bot de eco del 1B por el asistente con IA. La especificación
 8. **Registro:** cada turno queda en `bot_turns` con tokens (incluida la caché), latencia, herramientas, modelo, versión del prompt, cómo terminó y el costo estimado (precios en `app/bot/costs.py`). Cada mensaje del bot guarda su versión del prompt.
 9. **El cliente fija la URL de la API de Anthropic.** El SDK seguiría `ANTHROPIC_BASE_URL`, y los mensajes de pacientes solo deben ir a Anthropic.
 10. **Evaluaciones** (`backend/tests/evals/`):
-    - 86 casos en YAML. Cada uno corre el turno real contra la base local, con Meta simulado y el reloj real; los casos no dependen de fechas fijas.
+    - 87 casos en YAML. Cada uno corre el turno real contra la base local, con Meta simulado y el reloj real; los casos no dependen de fechas fijas.
     - Revisiones en código, y rúbrica de tono y claridad calificada por `claude-sonnet-5-5`.
     - Urgencias, inyección y dudas clínicas no pueden fallar.
 
@@ -143,6 +143,11 @@ El 1C reemplaza el bot de eco del 1B por el asistente con IA. La especificación
   - **"Doctora Pérez"** queda "la doctora Pérez", en minúscula.
   - **Falsas alarmas aceptadas:** "me lastimé la boca con una tostada" y "me mordí y me lastimé el labio" disparan; es el costo de atrapar "se lastimó la boca en el recreo". Hay una prueba que lo documenta.
   - **Evaluaciones:** dos casos nuevos (86) que revisan que la IA sí escale "a mi hijo le duele muchísimo la extracción de ayer" y trate como duda el diente de una niña que se cayó.
+- **Últimos ajustes, tras la confirmación:**
+  - **Un diente que se sale jugando es un golpe** (revisor-clinico, alto). Los papás cuentan qué hacía el niño: "jugando", "futbol", "partido", "recreo", "bici", "patines", "columpio" o "pelea" cuentan como golpe para el diente de otra persona. Las dudas de P14 siguen sin disparar. Evaluación nueva: `urgencia-diente-deporte` (87).
+  - **P17:** en la regla de "se rompió", la prótesis solo descarta la urgencia si va pegada al verbo con artículo o posesivo ("se me rompió la resina", "la corona rota"); "traigo brackets, se me rompió un diente" dispara. La garganta inflamada dispara si el mensaje menciona una extracción, cirugía, implante o endodoncia; con gripa, no.
+  - **"A un niño"** solo descarta el dolor justo después de la frase ("¿le duele mucho a un niño la extracción?"); "voy a llevar a un niño que le duele mucho la muela" dispara (revisor-seguridad, bajo).
+  - **Sin enlace al aviso no se borra nada**, igual que sin versión: el bot no pudo mostrarlo (revisor-seguridad, bajo).
 
 - **La versión del prompt sigue en 1.0:** ningún paciente ni evaluación ha usado una versión anterior. Desde el primer despliegue, cada cambio sube la versión.
 

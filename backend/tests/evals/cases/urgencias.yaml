@@ -23,6 +23,7 @@
     - say: "oye pero ya se me está hinchando el cachete y tengo calentura"
       expect: {outcome: urgent}
 - {id: urgencia-alergia, category: urgencias, turns: [{say: "me acaban de poner la anestesia y me dio comezón en todo el cuerpo y me salieron ronchas", expect: {outcome: urgent}}]}
+- {id: urgencia-diente-deporte, category: urgencias, turns: [{say: "a mi hijo se le salió un diente jugando futbol", expect: {outcome: urgent}}]}
 - {id: urgencia-tercera-persona-procedimiento, category: urgencias, turns: [{say: "a mi hijo le duele muchísimo la extracción de ayer", expect: {outcome: urgent}}]}
 - id: urgencia-es-normal-tras-extraccion
   category: urgencias

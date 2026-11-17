@@ -36,6 +36,7 @@ SHOULD_FIRE = [
     ("me duele un montón", PAIN),
     ("me duele bien gacho", PAIN),
     ("me sigue doliendo muchísimo", PAIN),
+    ("voy a llevar a un niño que le duele mucho la muela", PAIN),
     # Bleeding that does not stop
     ("no para de sangrar desde que me sacaron la muela", BLEEDING),
     ("estoy sangrando mucho", BLEEDING),
@@ -55,6 +56,8 @@ SHOULD_FIRE = [
     ("tengo la cara hinchadísima", SWELLING),
     ("tengo la lengua hinchada", SWELLING),
     ("se me está hinchando la garganta", SWELLING),
+    ("se me inflamó la garganta después de que me sacaron la muela", SWELLING),
+    ("desde la extracción tengo la garganta muy inflamada", SWELLING),
     # Fever with dental pain
     ("tengo fiebre y me duele la muela", FEVER),
     ("tengo calentura y la encia hinchada", FEVER),
@@ -82,6 +85,11 @@ SHOULD_FIRE = [
     ("se cayó y se le salió un diente, trae brackets", TRAUMA),
     ("se me rompió un diente, traigo brackets", TRAUMA),
     ("mi hijo se cayó en la escuela y se le salió un diente", TRAUMA),
+    ("a mi hijo se le salió un diente jugando futbol", TRAUMA),
+    ("se le salió el diente andando en bici", TRAUMA),
+    ("se peleó en la escuela y se le salió un diente", TRAUMA),
+    ("traigo brackets, se me rompió un diente", TRAUMA),
+    ("traigo los brackets y se me rompió un diente", TRAUMA),
     # Trouble swallowing or breathing
     ("no puedo tragar", BREATHING),
     ("me cuesta respirar", BREATHING),
@@ -136,6 +144,13 @@ SHOULD_NOT_FIRE = [
     "se cayó la resina y me raspa la encía",
     "se pegó la placa a la encía",
     "me lastimé la boca con el bracket",
+    "¿puedo ir a mi limpieza con la garganta inflamada?",
+    "¿me pueden sacar una cita? tengo la garganta inflamada",
+    "se me rompió una resina del diente",
+    "tengo la resina rota del diente",
+    "se rompió el bracket del diente",
+    "se cayó una resina y me raspa la encía",
+    "se le cayó un diente de leche jugando",
 ]
 
 
@@ -153,6 +168,7 @@ def test_questions_and_ordinary_messages_do_not_fire(text: str) -> None:
     "text",
     [
         "¿le duele mucho a los niños la extracción?",
+        "¿le duele mucho a un niño la extracción?",
         "¿al niño le duele mucho la extracción?",
         "¿a mi hija le va a doler mucho la endodoncia?",
         "a mi hija de 6 años se le cayó un diente, ¿la pueden revisar?",
@@ -165,9 +181,18 @@ def test_questions_about_a_procedure_and_a_childs_tooth_on_its_own_are_doubts(te
     assert detect_urgency(text, DEFAULT_SIGNALS) is None
 
 
-@pytest.mark.parametrize("text", ["me lastimé la boca con una tostada", "me mordí y me lastimé el labio"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "me lastimé la boca con una tostada",
+        "me mordí y me lastimé el labio",
+        "la resina se me rompió del diente",
+        "a mi hija se le cayó un diente en el recreo",
+    ],
+)
 def test_false_alarms_accepted_to_catch_a_hurt_mouth(text: str) -> None:
-    """revisor-clinico: not emergencies, but the price of catching "se lastimó la boca en el recreo"."""
+    """revisor-clinico: maybe not emergencies, but the price of catching "se lastimó la boca en el
+    recreo", "traigo brackets, se me rompió un diente" and a tooth knocked out while playing."""
     assert detect_urgency(text, DEFAULT_SIGNALS) == TRAUMA
 
 
