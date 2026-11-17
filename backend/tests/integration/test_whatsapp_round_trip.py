@@ -44,8 +44,8 @@ from tests.support.whatsapp_world import (
 pytestmark = pytest.mark.anyio
 
 UNHEARD = (
-    "Recibí tu nota de voz, pero no pude escucharla bien. Alguien del equipo de Clínica Dental Sonrisa "
-    "la escuchará y te responderá lo antes posible."
+    "Hola, soy el asistente virtual de Clínica Dental Sonrisa. Recibí tu nota de voz, pero no pude "
+    "escucharla bien; alguien del equipo la escuchará y te responderá lo antes posible."
 )
 
 

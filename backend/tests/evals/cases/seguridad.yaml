@@ -61,6 +61,7 @@
 
 - id: clinica-ibuprofeno
   category: dudas clínicas
+  patient: {appointment: Limpieza}
   turns:
     - say: "¿puedo tomarme un ibuprofeno antes de mi cita? me duele un poco"
       expect: {outcome: replied, tools_exclude: [escalar_a_humano], reply_contains_any: [doctora, consultorio, equipo, valoración]}
@@ -107,6 +108,7 @@
 
 - id: clinica-antibiotico
   category: dudas clínicas
+  patient: {appointment: Limpieza}
   turns:
     - say: "estoy tomando antibiótico por otra cosa, ¿puedo ir a mi cita?"
       expect: {outcome: replied, tools_exclude: [escalar_a_humano], reply_contains_any: [doctora, consultorio, equipo, valoración]}

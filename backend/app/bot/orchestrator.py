@@ -46,7 +46,7 @@ from app.db import bot as data
 from app.db import conversations
 from app.db.conversations import PendingMessage
 from app.jobs.context import LeaseLostError, WorkerContext
-from app.jobs.queue import EraseUnconsentedJob, enqueue
+from app.jobs.queue import EraseUnconsentedJob, enqueue, erase_scheduled
 from app.whatsapp import outbound
 
 logger = logging.getLogger(__name__)
@@ -105,10 +105,12 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915 - the steps of 
     voice = Voice(clinic.name, clinic.doctor, clinic.formal)
     profile = await _record_acepto(ctx, clinic, conversation.patient_id, profile, batch)
     signal = detect_urgency(_burst_text(batch), active_signals(clinic.urgency_signals))
-    # Whatever way the turn ends, what a patient who has not accepted wrote is erased after 24 h.
-    erase_later = not profile.consented
     paused = conversation.bot_paused_until is not None and conversation.bot_paused_until > now
     bot_on = clinic.bot_enabled and conversation.status == "bot" and not paused
+    # Whatever way the turn ends, what a patient who has not accepted wrote is erased after 24 h,
+    # but only if the bot answers this chat or already showed the notice: with the bot off, the
+    # clinic keeps its inbox as it always did.
+    erase_later = not profile.consented and (bot_on or requested_at is not None)
 
     async def finish(
         reply: BotReply | None,
@@ -142,6 +144,7 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915 - the steps of 
                 name=profile.name,
                 now=now,
                 turn_key=turn_key,
+                erasing=erase_later,
             )
         return await finish(None, None, hand_over=alerted)
 
@@ -153,7 +156,7 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915 - the steps of 
             conversation_id=conversation_id,
             reason=signal,
             priority="urgent",
-            summary=_urgent_summary(profile.name, signal, answered=True),
+            summary=_urgent_summary(profile.name, signal, answered=True, erasing=erase_later),
             turn_key=turn_key,
         )
         return await finish(_fixed(fixed.urgency(voice)), "urgent", hand_over=True)
@@ -167,7 +170,7 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915 - the steps of 
             conversation_id=conversation_id,
             reason="nota de voz sin transcribir",
             priority="normal",
-            summary=_unheard_summary(profile.name),
+            summary=_unheard_summary(profile.name, erasing=erase_later),
             turn_key=turn_key,
         )
         return await finish(_fixed(fixed.voice_note_unheard(voice)), "escalated", hand_over=True)
@@ -392,9 +395,9 @@ async def _finish(  # noqa: PLR0913 - the turn's results, written together
                 await data.mark_slots_shown(conn, conversation_id, message.id, reply.slot_keys)
         if hand_over:
             await conversations.set_status(conn, conversation_id, "human")
-        if erase_later:
+        if erase_later and not await erase_scheduled(conn, conversation_id):
             # Also when the turn ends early (urgency, voice note, chat with the team): the job
-            # erases what is older than 24 h and comes back for the rest.
+            # erases what is older than 24 h and comes back for the rest. One chain per chat.
             await enqueue(
                 conn,
                 EraseUnconsentedJob(clinic_id=clinic_id, conversation_id=conversation_id),
@@ -447,6 +450,7 @@ async def _alert_only(  # noqa: PLR0913 - what the alert needs
     name: str | None,
     now: datetime,
     turn_key: str,
+    erasing: bool,
 ) -> bool:
     """Alerts the team about an urgency in a chat the bot does not answer. While the same signal
     is still open from less than 2 h ago it does not alert again; a new signal always does, and
@@ -461,7 +465,7 @@ async def _alert_only(  # noqa: PLR0913 - what the alert needs
         conversation_id=conversation_id,
         reason=signal,
         priority="urgent",
-        summary=_urgent_summary(name, signal, answered=False),
+        summary=_urgent_summary(name, signal, answered=False, erasing=erasing),
         turn_key=turn_key,
     )
     return True
@@ -498,17 +502,19 @@ def _clinic_hosts(clinic: data.ClinicProfile) -> frozenset[str]:
     return frozenset(host for host in hosts if host)
 
 
-def _urgent_summary(name: str | None, signal: str, *, answered: bool) -> str:
+_ERASED_SOON = " No ha aceptado el aviso de privacidad: lo que escribió se borra a las 24 h."
+
+
+def _urgent_summary(name: str | None, signal: str, *, answered: bool, erasing: bool) -> str:
     wants = f"Paciente: {patient_label(name)}. Quiere: atención por una posible urgencia ({signal})."
     if answered:
-        return (
-            f"{wants} Intentado: se le mandó el mensaje de urgencia, con el 911 si le cuesta "
-            "respirar o tragar."
+        tried = "Intentado: se le mandó el mensaje de urgencia, con el 911 si le cuesta respirar o tragar."
+    else:
+        tried = (
+            "Intentado: nada; el chat estaba en pausa o con el equipo y no se le contestó. "
+            "Llámale o escríbele ya."
         )
-    return (
-        f"{wants} Intentado: nada; el chat estaba en pausa o con el equipo y no se le contestó. "
-        "Llámale o escríbele ya."
-    )
+    return f"{wants} {tried}{_ERASED_SOON if erasing else ''}"
 
 
 def _fallback_summary(name: str | None) -> str:
@@ -519,12 +525,17 @@ def _fallback_summary(name: str | None) -> str:
     )
 
 
-def _unheard_summary(name: str | None) -> str:
-    return (
+def _unheard_summary(name: str | None, *, erasing: bool) -> str:
+    summary = (
         f"Paciente: {patient_label(name)}. Quiere: no se sabe; mandó una nota de voz que no se pudo "
         "transcribir. Intentado: se le dijo que el equipo la escuchará; escúchala en la bandeja y "
         "contéstale."
     )
+    if erasing:
+        summary += (
+            " No ha aceptado el aviso de privacidad: la nota se borra a las 24 h de enviada; escúchala antes."
+        )
+    return summary
 
 
 def _declined_summary(name: str | None) -> str:

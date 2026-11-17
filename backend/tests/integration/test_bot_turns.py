@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import psycopg
 import pytest
+from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from app.bot.agent import NUDGE
@@ -29,6 +30,7 @@ from app.jobs.queue import ConversationJob, EraseUnconsentedJob
 from app.jobs.turns import handle_conversation
 from tests.conftest import CLINIC_A, LOCAL_ADMIN_DATABASE_URL, PHONE_NUMBER_ID_A, make_settings
 from tests.integration.test_whatsapp_round_trip import (
+    UNHEARD,
     conversation_of,
     one,
     outbound_of,
@@ -404,15 +406,40 @@ async def test_a_voice_note_nobody_could_hear_goes_to_the_team_before_the_notice
     conversation_id = await turn(ctx, db, phone, payload)
 
     # It might be an urgency: like one, a person hears about it before the privacy notice.
-    assert [body_text(m) for m in to_patient(meta, phone)] == [
-        "Recibí tu nota de voz, pero no pude escucharla bien. Alguien del equipo de Clínica Dental "
-        "Sonrisa la escuchará y te responderá lo antes posible."
-    ]
+    assert [body_text(m) for m in to_patient(meta, phone)] == [UNHEARD]
     assert await rows(
         db, "select reason, priority from public.escalations where conversation_id = %s", (conversation_id,)
     ) == [("nota de voz sin transcribir", "normal")]
     # No notice went out, but what a patient without consent sent is still erased after 24 h.
     assert await queued_count(db, {"kind": "erase_unconsented", "conversation_id": str(conversation_id)}) == 1
+
+
+async def test_one_erasure_waits_per_chat_however_many_turns(
+    settings: Settings, db: Database, meta: FakeMeta, phone: str
+) -> None:
+    ctx = world(settings, db, meta, ScriptedModel(*[answer("Abrimos de 9 a 7.") for _ in range(3)]))
+    conversation_id = await turn(ctx, db, phone, says(phone, "hola"))
+    for question in ("¿qué horario tienen?", "¿y los sábados?", "¿dónde están?"):
+        await turn(ctx, db, phone, says(phone, question))
+
+    assert await queued_count(db, {"kind": "erase_unconsented", "conversation_id": str(conversation_id)}) == 1
+
+
+async def test_with_the_bot_off_nothing_a_new_patient_writes_is_erased(
+    settings: Settings, db: Database, meta: FakeMeta, phone: str
+) -> None:
+    ctx = world(settings, db, meta)
+    admin_url = os.environ.get("TEST_ADMIN_DATABASE_URL", LOCAL_ADMIN_DATABASE_URL)
+    async with await psycopg.AsyncConnection.connect(admin_url, autocommit=True) as admin:
+        await admin.execute("update public.clinics set bot_enabled = false where id = %s", (CLINIC_A,))
+        try:
+            conversation_id = await turn(ctx, db, phone, says(phone, "hola, quiero una cita"))
+        finally:
+            await admin.execute("update public.clinics set bot_enabled = true where id = %s", (CLINIC_A,))
+
+    # Nobody showed the notice: the clinic keeps its inbox as it always did.
+    assert to_patient(meta, phone) == []
+    assert await queued_count(db, {"kind": "erase_unconsented", "conversation_id": str(conversation_id)}) == 0
 
 
 async def test_acepto_counts_even_when_the_team_has_the_chat(
@@ -528,7 +555,18 @@ async def test_what_a_patient_who_never_accepted_wrote_is_erased_after_24_hours(
     )
     assert kept == [(None, None), ("otra cosa", None)]
     assert old_path not in store.files
-    # It comes back for the newer message, 24 h after it arrived.
+    # The erasure already waiting (from the notice) comes back for the newer message: one chain.
+    assert await queued_count(db, {"kind": "erase_unconsented", "conversation_id": str(conversation_id)}) == 1
+
+    # Without one waiting (the worker took it), the job itself comes back for the newer message.
+    async with db.unscoped_transaction() as conn:
+        await conn.execute(
+            "update pgmq.q_whatsapp_inbound set read_ct = 1 where message @> %s",
+            (Jsonb({"kind": "erase_unconsented", "conversation_id": str(conversation_id)}),),
+        )
+    await handle_erase_unconsented(
+        ctx, EraseUnconsentedJob(clinic_id=CLINIC_A, conversation_id=conversation_id)
+    )
     assert await queued_count(db, {"kind": "erase_unconsented", "conversation_id": str(conversation_id)}) == 2
 
 

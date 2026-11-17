@@ -53,9 +53,10 @@ UNCONSENTED_URGENT_REASON = "posible urgencia (la detectó el asistente)"
 
 def unconsented_summary(name: str | None) -> str:
     return (
-        f"Paciente: {patient_label(name)}. Quiere: revisa la conversación; el asistente la pasó al "
+        f"Paciente: {patient_label(name)}. Quiere: no se sabe; el asistente pasó la conversación al "
         "equipo y, como no ha aceptado el aviso de privacidad, aquí no van detalles. Intentado: se "
-        "le dijo que el equipo le responderá. Lo que escribió se borra a las 24 h."
+        "le dijo que el equipo le responderá. Revisa la conversación; lo que escribió se borra a "
+        "las 24 h."
     )
 
 

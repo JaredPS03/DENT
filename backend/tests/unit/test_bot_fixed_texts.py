@@ -50,7 +50,9 @@ def test_the_doctor_article_reads_right_even_if_the_clinic_capitalized_it() -> N
     assert "Ya avisé al Dr. Ramírez" in fixed.urgency(Voice("Sonrisa", "El Dr. Ramírez", formal=False))
     assert "Ya avisé a la doctora Pérez" in fixed.urgency(Voice("Sonrisa", "La doctora Pérez", formal=False))
     assert fixed.doctor_phrase("La doctora Pérez") == "la doctora Pérez"
-    assert fixed.doctor_phrase("Dra. Pérez") == "Dra. Pérez"
+    assert fixed.doctor_phrase("Dra. Pérez") == "la Dra. Pérez"
+    assert "Ya avisé al Dr. Ramírez" in fixed.urgency(Voice("Sonrisa", "Dr. Ramírez", formal=False))
+    assert fixed.doctor_phrase("Laura Pérez") == "Laura Pérez"
 
 
 def test_declining_hands_the_chat_to_the_team() -> None:

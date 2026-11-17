@@ -49,12 +49,12 @@ def voice_note_unheard(voice: Voice) -> str:
     """A voice note nobody could transcribe: a person listens to it (it might be an urgency)."""
     if voice.formal:
         return (
-            "Recibí su nota de voz, pero no pude escucharla bien. Alguien del equipo de "
-            f"{voice.clinic_name} la escuchará y le responderá lo antes posible."
+            f"Hola, soy el asistente virtual de {voice.clinic_name}. Recibí su nota de voz, pero no "
+            "pude escucharla bien; alguien del equipo la escuchará y le responderá lo antes posible."
         )
     return (
-        "Recibí tu nota de voz, pero no pude escucharla bien. Alguien del equipo de "
-        f"{voice.clinic_name} la escuchará y te responderá lo antes posible."
+        f"Hola, soy el asistente virtual de {voice.clinic_name}. Recibí tu nota de voz, pero no "
+        "pude escucharla bien; alguien del equipo la escuchará y te responderá lo antes posible."
     )
 
 
@@ -101,10 +101,15 @@ def consent_declined(voice: Voice) -> str:
 
 
 def doctor_phrase(doctor: str) -> str:
-    """The article in lowercase, for the middle of a sentence: "La doctora Pérez" is "la doctora Pérez"."""
-    article, _, rest = doctor.partition(" ")
-    if article.lower() in {"el", "la"} and rest:
-        return f"{article.lower()} {rest}"
+    """For the middle of a sentence, with its article in lowercase: "La doctora Pérez" is
+    "la doctora Pérez", and "Dra. Pérez" is "la Dra. Pérez"."""
+    first, _, rest = doctor.partition(" ")
+    if first.lower() in {"el", "la"} and rest:
+        return f"{first.lower()} {rest}"
+    if first.lower() in {"dra.", "dra", "doctora"}:
+        return f"la {doctor}"
+    if first.lower() in {"dr.", "dr", "doctor"}:
+        return f"el {doctor}"
     return doctor
 
 

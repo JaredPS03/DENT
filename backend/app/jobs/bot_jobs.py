@@ -9,7 +9,7 @@ from app.db import bot as data
 from app.db.conversations import database_now
 from app.db.media_store import MediaStoreError
 from app.jobs.context import WorkerContext
-from app.jobs.queue import EraseUnconsentedJob, TeamAlertJob, enqueue
+from app.jobs.queue import EraseUnconsentedJob, TeamAlertJob, enqueue, erase_scheduled
 from app.jobs.turns import RetryLaterError
 from app.whatsapp import outbound
 from app.whatsapp.client import (
@@ -91,7 +91,7 @@ async def handle_erase_unconsented(ctx: WorkerContext, job: EraseUnconsentedJob)
         now = await database_now(conn)
         paths = await data.erase_unconsented(conn, job.conversation_id, now - CONSENT_WINDOW)
         oldest = await data.oldest_unerased_unconsented(conn, job.conversation_id)
-        if oldest is not None:
+        if oldest is not None and not await erase_scheduled(conn, job.conversation_id):
             delay = (oldest + CONSENT_WINDOW - now).total_seconds() + 60
             await enqueue(conn, job, delay_seconds=max(60, int(delay)))
     files = [path for path in paths if path]

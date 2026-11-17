@@ -118,6 +118,22 @@ async def turn_scheduled_from(conn: AsyncConnection, conversation_id: UUID, mome
     return bool(row and row[0])
 
 
+async def erase_scheduled(conn: AsyncConnection, conversation_id: UUID) -> bool:
+    """Whether an erasure of the conversation is waiting in the queue and no worker took it yet.
+    One chain is enough: what arrives later always expires after what it will erase."""
+    cursor = await conn.execute(
+        """
+        select exists (
+          select 1 from pgmq.q_whatsapp_inbound
+          where message @> %s and read_ct = 0
+        )
+        """,
+        (Jsonb({"kind": "erase_unconsented", "conversation_id": str(conversation_id)}),),
+    )
+    row = await cursor.fetchone()
+    return bool(row and row[0])
+
+
 async def read(db: Database, quantity: int) -> list[QueuedJob]:
     """Up to `quantity` jobs, waiting up to POLL_SECONDS for one to show up."""
     async with db.unscoped_transaction() as conn:

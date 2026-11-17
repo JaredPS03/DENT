@@ -123,7 +123,20 @@ El 1C reemplaza el bot de eco del 1B por el asistente con IA. La especificación
   - **Una foto con texto:** la IA ve lo que el paciente escribió junto a la foto.
   - **"El Dr. Ramírez"** con mayúscula ya no queda "Ya avisé a El Dr. Ramírez".
   - **Evaluaciones:** las dudas clínicas exigen respuesta sin escalar y con valoración; pedir una persona exige escalado normal y la urgencia "¿es normal que me duela muchísimo?" exige urgente; tres casos ya no copian los ejemplos del prompt; la rúbrica castiga pedir datos de más.
-- **Falsas alarmas que se quedan mientras Jared decide (P14):** "¿le duele mucho a los niños la extracción?" y "a mi hija de 6 años se le cayó un diente". Hay una prueba que las documenta.
+### Cuarta ronda y decisiones P12 y P14
+
+- **Decisiones de Jared:**
+  - **P12:** una nota de voz que no se pudo transcribir pasa al equipo, también antes del aviso de privacidad.
+  - **P14:** "¿le duele mucho a los niños la extracción?" y "a mi hija de 6 años se le cayó un diente" no son urgencias: entran como dudas. El filtro ya no dispara con el dolor de otra persona si lo que sigue es un procedimiento ("le duele mucho la extracción") o si habla de la gente en general ("a los niños"). Tampoco con un diente de otra persona que se cayó o se salió, salvo que el mensaje hable de un golpe o una caída. "Se me cayó un diente", en primera persona, sigue disparando.
+- **revisor-seguridad:**
+  - **Un solo borrado por chat:** cada turno encolaba uno y cada uno se volvía a encolar, así que se multiplicaban. Ahora solo se encola si no hay otro esperando.
+  - **"Me lastimé la boca"** vuelve a disparar, salvo que un bracket o una placa estén a cuatro palabras.
+- **revisor-clinico:**
+  - **Con el bot apagado** no se borra nada: el borrado solo se programa si el bot contesta ese chat o ya mandó el aviso.
+  - **Resúmenes** de urgencia y de nota de voz dicen si lo que escribió se borra a las 24 h.
+  - **La nota de voz sin transcribir** empieza presentándose como asistente virtual, porque ahora puede ser el primer mensaje.
+  - **"Dra. Pérez"** queda "la Dra. Pérez", y "Dr. Ramírez", "al Dr. Ramírez".
+  - **"Se cayó la resina y me raspa la encía"** ya no dispara.
 
 - **La versión del prompt sigue en 1.0:** ningún paciente ni evaluación ha usado una versión anterior. Desde el primer despliegue, cada cambio sube la versión.
 

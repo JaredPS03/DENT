@@ -70,6 +70,12 @@ class _Rule:
     # but "se le cayó un diente, trae brackets" is.
     unless_near: tuple[Phrase, ...] = ()
     near: int = 2
+    # Not when one of these starts right after `second`: "¿le duele mucho la extracción?" asks
+    # about a procedure, "le duele mucho la muela" is a symptom.
+    unless_then: tuple[Phrase, ...] = ()
+    # Only when the message also mentions one of these: a child's tooth that came out is an
+    # emergency after a fall, not on its own.
+    only_with: tuple[Phrase, ...] = ()
 
 
 _INTENSE = _phrases(
@@ -90,6 +96,26 @@ _HIT_PLACES = (*_TEETH, *_SOFT_PLACES)
 _PROSTHESES = _phrases(
     "resina", "calza", "corona", "bracket", "brackets", "protesis", "placa", "puente", "funda", "amalgama",
 )  # fmt: skip
+# The prosthesis as what fell or got stuck, right next to the verb: "se cayó la resina".
+_THE_PROSTHESIS = _phrases(
+    "la resina", "la calza", "la corona", "el bracket", "los brackets", "la protesis", "la placa",
+    "el puente", "la funda", "la amalgama",
+)  # fmt: skip
+# Questions about a procedure, not a symptom: "¿le duele mucho la extracción?".
+_PROCEDURES = _phrases(
+    "la extraccion", "la limpiesa", "la endodonsia", "la anestesia", "la inyeccion", "el piquete",
+    "el blanqueamiento", "los brackets", "la ortodonsia", "la curasion", "el tratamiento", "la sirugia",
+    "el implante", "la resina", "sacar*",
+)  # fmt: skip
+# Someone in general, not a patient: "¿a los niños les duele mucho?".
+_ANYONE = _phrases(
+    "a los ninos", "a las ninas", "a un nino", "a una nina", "a los bebes", "a la gente", "a las personas",
+    "a los pacientes", "a todos",
+)  # fmt: skip
+_BLOWS = _phrases(
+    "golpe*", "me pegue", "me pegaron", "le pegaron", "se pego", "me cai", "se cayo", "caida", "accidente",
+    "choque", "chocamos", "balonaso", "pelotaso", "patada", "codaso", "tropes*", "se resbalo",
+)  # fmt: skip
 
 _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
     "dolor fuerte": (
@@ -105,15 +131,23 @@ _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
                 "traigo un dolor",
                 "siento dolor",
                 "siento un dolor",
+                "me sigue doliendo",
+                "me siguen doliendo",
+                "sigue doliendo",
+            ),
+            second=_INTENSE,
+            gap=3,
+            unless_after=_HYPOTHETICAL,
+        ),
+        # Someone else in pain, but not a question about a procedure or about people in general.
+        _Rule(
+            first=_phrases(
                 "le duele",
                 "le duelen",
                 "le esta doliendo",
                 "le estan doliendo",
-                "tiene dolor",
-                "me sigue doliendo",
                 "le sigue doliendo",
-                "me siguen doliendo",
-                "sigue doliendo",
+                "tiene dolor",
                 "tiene un dolor",
                 "trae dolor",
                 "trae un dolor",
@@ -121,6 +155,8 @@ _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
             second=_INTENSE,
             gap=3,
             unless_after=_HYPOTHETICAL,
+            unless_anywhere=_ANYONE,
+            unless_then=_PROCEDURES,
         ),
         _Rule(
             first=_phrases("dolor"),
@@ -268,12 +304,28 @@ _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
             gap=6,
             either_order=True,
         ),
-        # A fall or a hit on the mouth or the face is a blow, braces or not.
-        _Rule(first=_phrases("se cayo", "se pego"), second=_SOFT_PLACES, gap=6, either_order=True),
+        # A fall or a hit on the mouth or the face is a blow, braces or not, unless what fell is
+        # the prosthesis itself ("se cayó la resina y me raspa la encía").
+        _Rule(
+            first=_phrases("se cayo", "se pego"),
+            second=_SOFT_PLACES,
+            gap=6,
+            either_order=True,
+            unless_near=_THE_PROSTHESIS,
+            near=0,
+        ),
+        _Rule(
+            first=_phrases("me lastime", "se lastimo"),
+            second=(*_TEETH, *_phrases("boca", "labio*", "cara", "mandibula", "quijada")),
+            gap=6,
+            either_order=True,
+            unless_near=_PROSTHESES,
+            near=4,
+        ),
         # Verbs with two meanings: "se pegó la resina" or "me lastimé con el bracket" are not
         # blows. A tooth that "se cayó" is the rule of a tooth that came out, below.
         _Rule(
-            first=_phrases("se pego", "me lastime", "se lastimo"),
+            first=_phrases("se pego"),
             second=_TEETH,
             gap=6,
             either_order=True,
@@ -308,22 +360,22 @@ _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
         ),
         # A tooth that came out: "se me salió" is a tooth lost, "me salió" is one growing in.
         _Rule(
-            first=_phrases(
-                "se me salio",
-                "se le salio",
-                "se salio",
-                "se me cayo",
-                "se le cayo",
-                "se cayo",
-                "se me zafo",
-                "se le zafo",
-                "se zafo",
-            ),
+            first=_phrases("se me salio", "se me cayo", "se me zafo"),
             second=_TEETH,
             gap=3,
             either_order=True,
             unless_anywhere=_phrases("de leche", "juicio", "primer diente", "primera muela"),
             unless_near=_PROSTHESES,
+        ),
+        # Someone else's tooth (usually a child's) is an emergency only after a blow (Jared, P14).
+        _Rule(
+            first=_phrases("se le salio", "se salio", "se le cayo", "se le zafo", "se zafo"),
+            second=_TEETH,
+            gap=3,
+            either_order=True,
+            unless_anywhere=_phrases("de leche", "juicio", "primer diente", "primera muela"),
+            unless_near=_PROSTHESES,
+            only_with=_BLOWS,
         ),
     ),
     "dificultad para tragar o respirar": (
@@ -416,6 +468,8 @@ def detect_urgency(text: str, signals: Iterable[str]) -> str | None:
 def _matches(rule: _Rule, tokens: tuple[str, ...]) -> bool:
     if any(_occurrences(tokens, phrase) for phrase in rule.unless_anywhere):
         return False
+    if rule.only_with and not any(_occurrences(tokens, phrase) for phrase in rule.only_with):
+        return False
     firsts = [
         span
         for phrase in rule.first
@@ -428,7 +482,9 @@ def _matches(rule: _Rule, tokens: tuple[str, ...]) -> bool:
     seconds = [span for phrase in rule.second for span in _occurrences(tokens, phrase)]
     for first_start, first_end in firsts:
         for second_start, second_end in seconds:
-            if 0 <= second_start - first_end <= rule.gap:
+            if 0 <= second_start - first_end <= rule.gap and not _starts_at(
+                tokens, second_end, rule.unless_then
+            ):
                 return True
             if rule.either_order and 0 <= first_start - second_end <= rule.gap:
                 return True
@@ -446,6 +502,10 @@ def _occurrences(tokens: Sequence[str], phrase: Phrase) -> list[tuple[int, int]]
 
 def _same(token: str, word: str) -> bool:
     return token.startswith(word[:-1]) if word.endswith("*") else token == word
+
+
+def _starts_at(tokens: Sequence[str], start: int, phrases: Iterable[Phrase]) -> bool:
+    return any(span[0] == start for phrase in phrases for span in _occurrences(tokens, phrase))
 
 
 def _near(tokens: Sequence[str], span: tuple[int, int], phrases: Iterable[Phrase], near: int) -> bool:

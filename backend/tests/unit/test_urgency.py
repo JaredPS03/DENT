@@ -66,13 +66,16 @@ SHOULD_FIRE = [
     ("tengo la boca golpeada", TRAUMA),
     ("hola, soy paciente nuevo, se me salió un diente", TRAUMA),
     ("mi bebé se cayó y se le salió un diente", TRAUMA),
-    ("a mi hija se le zafó el diente", TRAUMA),
+    ("a mi hija se le zafó el diente con el golpe", TRAUMA),
+    ("mi hijo se lastimó la boca en el recreo", TRAUMA),
+    ("me lastimé la boca jugando futbol", TRAUMA),
+    ("se lastimó la cara y la boca al caerse", TRAUMA),
     ("mi hijo se cayó y se pegó en la boca, trae brackets", TRAUMA),
     ("se cayó de la bici y se pegó en la cara, usa placa", TRAUMA),
     ("se cayó, tiene brackets y le sangra la boca", TRAUMA),
     ("hola, tengo brackets\nmi hijo se cayó y se pegó en la boca", TRAUMA),
     ("se cayó y se pegó en el diente, trae brackets", TRAUMA),
-    ("se le cayó un diente, trae brackets", TRAUMA),
+    ("se cayó y se le salió un diente, trae brackets", TRAUMA),
     ("se me rompió un diente, traigo brackets", TRAUMA),
     ("mi hijo se cayó en la escuela y se le salió un diente", TRAUMA),
     # Trouble swallowing or breathing
@@ -126,6 +129,9 @@ SHOULD_NOT_FIRE = [
     "la resina se me cayó del diente",
     "se me rompió la resina del diente",
     "a mi hijo se le cayó el bracket del diente",
+    "se cayó la resina y me raspa la encía",
+    "se pegó la placa a la encía",
+    "me lastimé la boca con el bracket",
 ]
 
 
@@ -143,12 +149,16 @@ def test_questions_and_ordinary_messages_do_not_fire(text: str) -> None:
     "text",
     [
         "¿le duele mucho a los niños la extracción?",
+        "¿al niño le duele mucho la extracción?",
+        "¿a mi hija le va a doler mucho la endodoncia?",
         "a mi hija de 6 años se le cayó un diente, ¿la pueden revisar?",
+        "a mi hija se le zafó el diente",
+        "a mi hijo se le salió un diente, ¿le pueden ver?",
     ],
 )
-def test_false_alarms_accepted_while_jared_decides(text: str) -> None:
-    """The filter errs on the side of firing; whether these should stay is P14 in docs/avance.md."""
-    assert detect_urgency(text, DEFAULT_SIGNALS) is not None
+def test_questions_about_a_procedure_and_a_childs_tooth_on_its_own_are_doubts(text: str) -> None:
+    """Jared, P14: they go to the AI as questions; with a fall or a blow they are urgencies."""
+    assert detect_urgency(text, DEFAULT_SIGNALS) is None
 
 
 def test_the_task_asks_for_at_least_30_that_fire_and_15_that_do_not() -> None:
