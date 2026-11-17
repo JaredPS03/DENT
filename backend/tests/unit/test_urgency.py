@@ -66,6 +66,10 @@ SHOULD_FIRE = [
     ("hola, soy paciente nuevo, se me salió un diente", TRAUMA),
     ("mi bebé se cayó y se le salió un diente", TRAUMA),
     ("a mi hija se le zafó el diente", TRAUMA),
+    ("mi hijo se cayó y se pegó en la boca, trae brackets", TRAUMA),
+    ("se cayó de la bici y se pegó en la cara, usa placa", TRAUMA),
+    ("se cayó, tiene brackets y le sangra la boca", TRAUMA),
+    ("hola, tengo brackets\nmi hijo se cayó y se pegó en la boca", TRAUMA),
     # Trouble swallowing or breathing
     ("no puedo tragar", BREATHING),
     ("me cuesta respirar", BREATHING),

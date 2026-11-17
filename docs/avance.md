@@ -44,9 +44,9 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
   - **Evaluaciones:** 84 casos en `backend/tests/evals/`, con revisiones en código y una rúbrica que califica `claude-sonnet-5-5`.
   - **Se quitó el bot de eco.** Guía para probar: `docs/probar-bot.md`.
 - **Evidencia:**
-  - `uv run pytest`: **563 passed**, 193 más que en el 1B; las evaluaciones quedan fuera porque cuestan. Entre ellas:
-    - 93 frases del filtro de urgencia: 65 que disparan y 28 que no;
-    - urgencia antes que el aviso y que la IA; con el chat tomado solo alerta, y respirar vuelve a alertar a los 10 minutos;
+  - `uv run pytest`: **573 passed**, 203 más que en el 1B; las evaluaciones quedan fuera porque cuestan. Entre ellas:
+    - 97 frases del filtro de urgencia: 69 que disparan y 28 que no;
+    - urgencia, y nota de voz sin transcribir, antes que el aviso y que la IA; con el chat tomado solo alerta, y respirar vuelve a alertar a los 10 minutos;
     - Acepto guarda la prueba y contesta lo que el paciente había escrito; No acepto pasa al equipo con alerta; el borrado a las 24 h;
     - no se agenda un horario que la IA no mostró, que se mostró en un mensaje que falló, ni la cita de otro paciente;
     - caché del prompt, herramientas estrictas y texto del paciente que no rompe sus etiquetas;
@@ -56,7 +56,7 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
   - CI en verde: [run 21](https://github.com/JaredPS03/DENT/actions/runs/44011671420) y [run 22](https://github.com/JaredPS03/DENT/actions/runs/44013603965).
   - **Evaluaciones: sin correr.** Llaman a la API real y en esta sesión no hay llave: la petición de credencial no se pudo mostrar y la API respondió 401. Sin la llave fallan de inmediato, en lugar de pasar en falso.
   - **`revisor-seguridad`, primera ronda:** 1 alto, 5 medios y 5 bajos, todos corregidos con su prueba (detalle en la decisión 007). El alto: el borrado a las 24 h podía tocar a un paciente que ya había aceptado un aviso anterior.
-  - **`revisor-seguridad`, segunda ronda:** 1 medio, 3 bajos y una nota, corregidos en `1345d1e`. Su confirmación está en curso.
+  - **`revisor-seguridad`, segunda ronda:** 1 medio, 3 bajos y una nota, corregidos en `1345d1e`. Al confirmarlos encontró 2 medios y 1 bajo nuevos, corregidos con su prueba: un golpe en la boca de alguien con brackets había dejado de disparar; una nota de voz sin transcribir de quien no ha aceptado no llegaba al equipo; y un enlace del consultorio podía cargar otro dominio. Su confirmación de estas tres está en curso.
   - **`revisor-clinico`:** tres rondas.
     - En la primera, el filtro de urgencia se amplió, el 911 quedó solo para respirar o tragar, y el prompt dejó de tranquilizar, dar cuidados o prometer.
     - En la segunda: fecha completa de los horarios, menos falsas alarmas, urgencias sin consentimiento marcadas como tales, y casos de evaluación más estrictos.
@@ -81,7 +81,7 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
     - **P9:** fotos a una persona.
     - **P10:** citas para otra persona; hoy `registrar_paciente` cambia el nombre del paciente.
     - **P11:** la dirección en la confirmación.
-    - **P12:** una nota de voz sin transcribir como primer mensaje recibe el aviso; hoy pasa al equipo hasta que acepta.
+    - **P12:** una nota de voz sin transcribir de quien no ha aceptado pasa al equipo antes del aviso, como una urgencia (regla 16 de CLAUDE.md). El equipo la escucharía sin consentimiento: confírmalo y que lo vea el abogado.
     - **P13:** botones "Hoy" o "Mañana" tocados al día siguiente: usar siempre el día de la semana o que venzan a medianoche.
     - **P14:** "¿al niño le duele mucho la extracción?" dispara como urgencia.
     - **P15:** si el dentista edita el mensaje de urgencia (1E), la línea del 911 queda fija.

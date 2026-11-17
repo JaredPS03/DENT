@@ -81,7 +81,8 @@ _FACE_AND_NECK = _phrases(
 )  # fmt: skip
 # A "bolita" on the eyelid or the lip is common and not an emergency; swollen lips or tongue are.
 _FACE = (*_FACE_AND_NECK, *_phrases("ojo", "ojos", "parpado*", "labio*", "lengua", "debajo de la lengua"))
-_HIT_PLACES = (*_TEETH, *_phrases("boca", "labio*", "cara", "mandibula", "quijada", "encia*"))
+_SOFT_PLACES = _phrases("boca", "labio*", "cara", "mandibula", "quijada", "encia*")
+_HIT_PLACES = (*_TEETH, *_SOFT_PLACES)
 _PROSTHESES = _phrases(
     "resina", "calza", "corona", "bracket", "brackets", "protesis", "placa", "puente", "funda", "amalgama",
 )  # fmt: skip
@@ -256,9 +257,18 @@ _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
             gap=6,
             either_order=True,
         ),
+        # A fall or a hit on the mouth or the face is a blow, braces or not.
+        _Rule(first=_phrases("se cayo", "se pego"), second=_SOFT_PLACES, gap=6, either_order=True),
         # Verbs with two meanings: "se cayó la resina" or "me lastimé con el bracket" are not blows.
         _Rule(
-            first=_phrases("se cayo", "se pego", "me lastime", "se lastimo"),
+            first=_phrases("se cayo", "se pego"),
+            second=_TEETH,
+            gap=6,
+            either_order=True,
+            unless_anywhere=_PROSTHESES,
+        ),
+        _Rule(
+            first=_phrases("me lastime", "se lastimo"),
             second=_HIT_PLACES,
             gap=6,
             either_order=True,

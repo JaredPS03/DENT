@@ -41,6 +41,7 @@ from tests.integration.test_whatsapp_round_trip import (
 from tests.support.fake_model import ScriptedModel, answer, plain_text, tool_use, tool_uses
 from tests.support.meta_fixtures import meta_payload
 from tests.support.whatsapp_world import (
+    VOICE_NOTE,
     FakeMeta,
     MemoryStore,
     consenting_patient,
@@ -382,6 +383,34 @@ async def test_declining_hands_the_chat_to_the_team(
         )
         == []
     )
+
+
+async def test_a_voice_note_nobody_could_hear_goes_to_the_team_before_the_notice(
+    settings: Settings, db: Database, meta: FakeMeta, phone: str
+) -> None:
+    ctx = world(settings, db, meta)
+    media_id = str(uuid4().int)[:16]
+    meta.media[media_id] = (VOICE_NOTE, "audio/ogg")
+    meta.media_url_override[media_id] = "https://attacker.example/x"  # never fetched: no transcription
+    payload = meta_payload(
+        "audio",
+        phone_number_id=PHONE_NUMBER_ID_A,
+        user_phone=wa_id(phone),
+        message_id=wamid(),
+        timestamp=int(time.time()),
+    )
+    payload["entry"][0]["changes"][0]["value"]["messages"][0]["audio"]["id"] = media_id
+
+    conversation_id = await turn(ctx, db, phone, payload)
+
+    # It might be an urgency: like one, a person hears about it before the privacy notice.
+    assert [body_text(m) for m in to_patient(meta, phone)] == [
+        "Recibí tu nota de voz, pero no pude escucharla bien. Alguien del equipo de Clínica Dental "
+        "Sonrisa la escuchará y te responderá lo antes posible."
+    ]
+    assert await rows(
+        db, "select reason, priority from public.escalations where conversation_id = %s", (conversation_id,)
+    ) == [("nota de voz sin transcribir", "normal")]
 
 
 async def test_without_accepting_the_bot_answers_general_questions_and_asks_again(

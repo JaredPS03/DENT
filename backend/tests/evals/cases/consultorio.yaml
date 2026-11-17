@@ -117,14 +117,12 @@
       expect: {tools_include: [buscar_disponibilidad]}
   judge: true
 
-- id: audio-sin-transcribir-y-acepta
+- id: audio-sin-transcribir-sin-consentimiento
   category: paciente sin consentimiento
   patient: {consented: false}
   turns:
     - audio_unheard: true
-      expect: {outcome: consent_notice}
-    - tap: consent_accept
-      expect: {outcome: escalated, tools_include: [escalar_a_humano], reply_not_contains: [escribe, escribir]}
+      expect: {outcome: escalated, model_calls: 0, reply_not_contains: [escribe, escribir]}
 
 - id: usted-agendar
   category: consultorio de usted

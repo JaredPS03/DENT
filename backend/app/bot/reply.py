@@ -28,7 +28,9 @@ CONSENT_ACCEPT_PREFIX = "consent:accept:"
 CONSENT_DECLINE_ID = "consent:decline"
 OPTION_ID_PREFIX = "opcion:"
 
-_LINK = re.compile(r"(?i)\b(?:https?://|www\.)[^\s<>\"']+")
+# Only URL characters and no query or fragment: what follows ("?u=https://...", "|otro.com") is
+# checked again as text, so a link of the clinic cannot carry another domain.
+_LINK = re.compile(r"(?i)\b(?:https?://|www\.)[a-z0-9\-._~:/@!$&()*+,;=%]+")
 # A bare domain ("bit.ly/pago", "pagos-sonrisa.com"): WhatsApp turns it into a link too.
 _HOST = re.compile(r"(?i)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}\b")
 # A title glued to a name ("Dra.Laura") is not a domain: capitals as written, no path after it.

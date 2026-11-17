@@ -109,6 +109,11 @@ def test_a_list_of_plain_options() -> None:
         ({"texto": "Visita dr.malicioso.com"}, "enlace"),
         ({"texto": "Paga en Dr.Link/pago"}, "enlace"),
         ({"texto": "Aviso: https://consultorio.example/x y pagos.example/aviso.pdf"}, "enlace"),
+        ({"texto": "Aviso: https://consultorio.example/|pagos-sonrisa.com"}, "enlace"),
+        ({"texto": "Aviso: https://consultorio.example/\\pagos-sonrisa.com"}, "enlace"),
+        ({"texto": "Mapa: https://maps.app.goo.gl/x?u=https://pagos-sonrisa.com"}, "enlace"),
+        ({"texto": "Mapa: https://maps.app.goo.gl/x#pagos-sonrisa.com"}, "enlace"),
+        ({"texto": "Aviso: https://consultorio.example/\u200bpagos-sonrisa.com"}, "enlace"),
     ],
 )
 def test_what_breaks_the_rules_goes_back_to_the_ai_with_the_reason(

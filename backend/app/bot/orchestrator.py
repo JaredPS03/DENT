@@ -4,7 +4,9 @@
    inbox. If it carries an urgency signal, the team is alerted anyway, without writing to the
    patient (a person is already in charge).
 2. Deterministic urgency filter: escalate as urgent, alert the team, send the fixed urgency
-   message and stop. Before the privacy notice, so a patient in pain always gets help.
+   message and stop. Before the privacy notice, so a patient in pain always gets help. A voice
+   note nobody could transcribe might be an urgency too: it goes to the team, also before the
+   notice.
 3. Consent gate: Acepto stores the proof and the turn goes on to answer what the patient wrote
    before; No acepto hands the chat to the team; a first message gets the notice; later ones get
    general answers from the AI with the notice under them. What a patient who never accepted
@@ -152,6 +154,20 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913 - the steps of one turn,
         )
         return await finish(_fixed(fixed.urgency(voice)), "urgent", hand_over=True)
 
+    if _unheard_voice_note(batch):
+        # Nobody could read it, and it might be an urgency: like one, it goes to a person before
+        # the privacy notice (bot rule 16).
+        await escalate(
+            ctx.db,
+            clinic_id=clinic_id,
+            conversation_id=conversation_id,
+            reason="nota de voz sin transcribir",
+            priority="normal",
+            summary=_unheard_summary(profile.name),
+            turn_key=turn_key,
+        )
+        return await finish(_fixed(fixed.voice_note_unheard(voice)), "escalated", hand_over=True)
+
     if not clinic.notice_url or not clinic.notice_version:
         # Without a privacy notice the bot cannot ask for consent: the message stays in the inbox.
         logger.error("bot.privacy_notice_missing", extra={"conversation_id": str(conversation_id)})
@@ -173,19 +189,6 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913 - the steps of one turn,
         if isinstance(gate, BotReply):
             return await finish(gate, "consent_notice", hand_over=gate.hand_over)
         profile, consent_request = gate
-
-    if _unheard_voice_note(batch):
-        # Nobody could read it, and it might be an urgency: a person listens to it.
-        await escalate(
-            ctx.db,
-            clinic_id=clinic_id,
-            conversation_id=conversation_id,
-            reason="nota de voz sin transcribir",
-            priority="normal",
-            summary=_unheard_summary(profile.name),
-            turn_key=turn_key,
-        )
-        return await finish(_fixed(fixed.voice_note_unheard(voice)), "escalated", hand_over=True)
 
     if ctx.model is None:
         logger.warning("bot.model_not_configured", extra={"conversation_id": str(conversation_id)})

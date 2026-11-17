@@ -93,6 +93,10 @@ El 1C reemplaza el bot de eco del 1B por el asistente con IA. La especificación
   - **No acepto:** el chat pasa al equipo al cerrar el turno, junto con la respuesta, como los demás escalados.
   - **Diente que se salió:** "nuevo" o "nueva" ya no apagan la regla ("soy paciente nuevo, se me salió un diente" sí dispara).
   - **Enlaces:** el nombre de un archivo dentro de un enlace del consultorio ("aviso.pdf") y un título pegado a un nombre ("Dra.Laura") ya no se toman por dominios.
+  - **Confirmación:** cerró los cuatro y encontró tres nuevos, corregidos con su prueba:
+    - **Golpe con brackets:** "se cayó y se pegó en la boca, trae brackets" había dejado de disparar. Ahora una caída o un golpe en la boca o la cara dispara siempre; la excepción de resinas y brackets solo aplica cuando lo que "se cayó" es un diente.
+    - **Nota de voz sin transcribir de quien no ha aceptado:** recibía el aviso y nadie se enteraba. Ahora pasa al equipo antes del aviso, igual que una urgencia (regla 16 de CLAUDE.md), y la regla del prompt que lo cubría se quitó.
+    - **Enlaces:** un enlace del consultorio ya no puede cargar otro dominio después de un carácter que no es de URL ("|", "\\"), en la consulta (`?u=https://…`) o en el fragmento: eso se revisa aparte.
 - **revisor-clinico:**
   - **Horarios:** la IA ve la fecha completa de cada horario, porque una etiqueta de ayer ("Mañana 10:30 am") puede ser hoy.
   - **Filtro de urgencia:**
@@ -102,7 +106,7 @@ El 1C reemplaza el bot de eco del 1B por el asistente con IA. La especificación
     - más frases de respirar en tercera persona ("no le entra el aire", "se está ahogando");
     - una "bolita" en el párpado, el labio o la lengua ya no dispara; hinchados, sí.
   - **Sin consentimiento,** una urgencia que encuentra la IA le dice al equipo que es urgencia, sin síntomas.
-  - **Prompt:** la regla 8 aclara que lo de no poner síntomas es solo sin consentimiento; fotos y archivos no se prometen revisar; tras "Acepto", una nota de voz sin transcribir pasa al equipo.
+  - **Prompt:** la regla 8 aclara que lo de no poner síntomas es solo sin consentimiento, y fotos y archivos no se prometen revisar.
   - **Resúmenes:** "Llámale o escríbele ya" en urgencias sin respuesta, y "Quiere: no se sabe" en la nota de voz.
   - **Evaluaciones:** 2 casos nuevos (84 en total), revisa que se agende justo el horario elegido y la rúbrica ignora los textos fijos.
 - **La versión del prompt sigue en 1.0:** ningún paciente ni evaluación ha usado una versión anterior. Desde el primer despliegue, cada cambio sube la versión.
