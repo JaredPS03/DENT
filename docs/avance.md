@@ -4,12 +4,16 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
 
 ## Estado actual
 
-- **Fase y hito:** Fase 1 · hito 1B cerrado (WhatsApp de ida y vuelta, todavía sin IA). La Fase 0 corre en paralelo: su código está terminado y falta su puerta con el número propio de Axon.
+- **Fase y hito:** Fase 1 · hito 1C terminado en código (el bot con IA), con las evaluaciones pendientes de correr con la llave de Anthropic. La Fase 0 corre en paralelo: su código está terminado y falta su puerta con el número propio de Axon.
 - **Siguiente paso:**
-  - Jared prueba el eco con el número de prueba siguiendo `docs/probar-eco.md`.
-  - Claude empieza el 1C (el bot con IA) con el prompt de `prompts/fases.md`: primero el plan.
+  - Jared corre las evaluaciones con su llave (`backend/tests/evals/README.md`) y prueba el bot con el número de prueba siguiendo `docs/probar-bot.md`.
+  - Jared contesta las preguntas de producto pendientes del 1C (abajo).
+  - Claude empieza el 1D con el prompt de `prompts/fases.md`: primero el plan.
   - Jared pasa la puerta de la Fase 0 con `docs/puerta-fase-0.md`.
-- **Bloqueos:** ninguno en el código. Para usar audios reales hace falta firmar el DPA de OpenAI y mencionar la transcripción en el aviso de privacidad (decisión 006).
+- **Bloqueos:**
+  - Las evaluaciones llaman a la API real y no hay llave en esta sesión.
+  - Para audios reales hace falta firmar el DPA de OpenAI y mencionar la transcripción en el aviso de privacidad (decisión 006).
+  - Antes de pacientes reales: aprobar `alerta_equipo` en Meta y que un abogado revise el aviso, el texto de "No acepto" y el borrado a las 24 h.
 
 ## Plantilla de cada entrada
 
@@ -22,6 +26,67 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
 ```
 
 ## Entradas
+
+### 2026-11-17 · Hito 1C · El bot con IA
+
+- **Qué quedó:**
+  - **El turno** (`app/bot/orchestrator.py`), en el orden de `.claude/rules/bot-ia.md`:
+    - Bot apagado, en pausa o chat tomado: el mensaje queda en la bandeja; si es urgencia, solo se alerta al equipo.
+    - Filtro de urgencia determinista, antes del aviso de privacidad y de la IA.
+    - Puerta de consentimiento: aviso con Acepto y No acepto; sin aceptar, la IA solo da información general; lo que escribió quien nunca aceptó se borra a las 24 h.
+    - La IA (`claude-haiku-5-5`) con sus herramientas, y el mensaje fijo de respaldo si algo falla.
+  - **Filtro de urgencia** (`app/bot/urgency.py`): reglas de frases cercanas por cada señal, que perdonan acentos, faltas de ortografía y letras repetidas, y reconocen cuando le pasa a otra persona. La señal de respirar o tragar no se puede quitar y se revisa primero.
+  - **Herramientas** (`app/bot/tools.py`): las 8 de la Fase 1 más `responder`, en modo estricto y validadas en código. Solo se agenda un horario que el paciente vio, en un mensaje que sí salió, y que eligió en un turno posterior.
+  - **`responder`** (`app/bot/reply.py`): un solo mensaje, con botones o lista; los horarios llevan la etiqueta como título y el inicio exacto como id; enlaces solo del consultorio.
+  - **Alertas al equipo:** plantilla `alerta_equipo` desde el número de Axon, una por persona y sin datos de salud.
+  - **Prompt v1.0** con caché (`app/bot/prompts/v1.0.md`, copia exacta de `docs/prompt-del-bot.md`) y cliente de Anthropic con la URL fijada.
+  - **Registro:** cada turno queda en `bot_turns` con tokens, caché, latencia, herramientas, versión del prompt, cómo terminó y su costo estimado.
+  - **Evaluaciones:** 84 casos en `backend/tests/evals/`, con revisiones en código y una rúbrica que califica `claude-sonnet-5-5`.
+  - **Se quitó el bot de eco.** Guía para probar: `docs/probar-bot.md`.
+- **Evidencia:**
+  - `uv run pytest`: **563 passed**, 193 más que en el 1B; las evaluaciones quedan fuera porque cuestan. Entre ellas:
+    - 93 frases del filtro de urgencia: 65 que disparan y 28 que no;
+    - urgencia antes que el aviso y que la IA; con el chat tomado solo alerta, y respirar vuelve a alertar a los 10 minutos;
+    - Acepto guarda la prueba y contesta lo que el paciente había escrito; No acepto pasa al equipo con alerta; el borrado a las 24 h;
+    - no se agenda un horario que la IA no mostró, que se mostró en un mensaje que falló, ni la cita de otro paciente;
+    - caché del prompt, herramientas estrictas y texto del paciente que no rompe sus etiquetas;
+    - respaldo ante falla del modelo, sin `responder`, con más de 6 herramientas o en el último reintento;
+    - un turno reintentado después de escalar contesta una vez y no alerta dos veces.
+  - ruff, formato y mypy limpios. `pnpm db:test`: **392 pruebas pgTAP, PASS**, 55 nuevas, con las tres tablas nuevas probadas entre consultorios.
+  - CI en verde: [run 21](https://github.com/JaredPS03/DENT/actions/runs/44011671420) y [run 22](https://github.com/JaredPS03/DENT/actions/runs/44013603965).
+  - **Evaluaciones: sin correr.** Llaman a la API real y en esta sesión no hay llave: la petición de credencial no se pudo mostrar y la API respondió 401. Sin la llave fallan de inmediato, en lugar de pasar en falso.
+  - **`revisor-seguridad`, primera ronda:** 1 alto, 5 medios y 5 bajos, todos corregidos con su prueba (detalle en la decisión 007). El alto: el borrado a las 24 h podía tocar a un paciente que ya había aceptado un aviso anterior.
+  - **`revisor-seguridad`, segunda ronda:** 1 medio, 3 bajos y una nota, corregidos en `1345d1e`. Su confirmación está en curso.
+  - **`revisor-clinico`:** tres rondas.
+    - En la primera, el filtro de urgencia se amplió, el 911 quedó solo para respirar o tragar, y el prompt dejó de tranquilizar, dar cuidados o prometer.
+    - En la segunda: fecha completa de los horarios, menos falsas alarmas, urgencias sin consentimiento marcadas como tales, y casos de evaluación más estrictos.
+    - La tercera ronda, sobre los textos de `1345d1e`, está en curso.
+- **Decisiones:** [007 · El bot con IA](decisiones/007-bot-con-ia.md). Jared decidió:
+  - **SDK y alcance:** el SDK oficial `anthropic`; los precios del plan Esencial (2,490 de instalación y 1,490 al mes) y el Completo después.
+  - **Urgencias:** con el chat en pausa, solo se alerta al equipo; la señal de respirar o tragar no se puede quitar.
+  - **Consentimiento:** sin "Acepto", la IA da información general y repite el aviso; el texto de "No acepto" es "El asistente ya no te escribirá".
+  - **Dudas clínicas:** primero se ofrece una valoración.
+- **Dependencia nueva, aprobada por Jared:** `anthropic`.
+- **Pendiente:**
+  - **Jared, antes de pacientes reales:**
+    - correr las evaluaciones con su llave y revisar el resumen por categoría (urgencias, inyección y dudas clínicas no pueden fallar);
+    - aprobar `alerta_equipo` en Meta, con un botón de enlace al panel;
+    - que un abogado revise el aviso, el texto de "No acepto" y el borrado a las 24 h.
+  - **¿Declarar PyYAML?** Las evaluaciones lo usan y hoy llega con `fastapi[standard]`. Agregarlo como dependencia de desarrollo necesita tu permiso.
+  - **Preguntas de producto para Jared (revisor-clinico):**
+    - **P5:** señales nuevas (boca que no abre, alergia a la anestesia) y falsas alarmas aceptables ("muela rota desde hace años", "no me duele mucho").
+    - **P6:** primeros auxilios para un diente que se salió completo.
+    - **P7:** urgencias fuera de horario; exigir al menos un teléfono de alertas antes de encender el bot.
+    - **P8:** ofrecer reagendar antes de cancelar.
+    - **P9:** fotos a una persona.
+    - **P10:** citas para otra persona; hoy `registrar_paciente` cambia el nombre del paciente.
+    - **P11:** la dirección en la confirmación.
+    - **P12:** una nota de voz sin transcribir como primer mensaje recibe el aviso; hoy pasa al equipo hasta que acepta.
+    - **P13:** botones "Hoy" o "Mañana" tocados al día siguiente: usar siempre el día de la semana o que venzan a medianoche.
+    - **P14:** "¿al niño le duele mucho la extracción?" dispara como urgencia.
+    - **P15:** si el dentista edita el mensaje de urgencia (1E), la línea del 911 queda fija.
+  - **1D:** tope diario de transcripciones por consultorio, avisos de mensajes sin respuesta y limpieza de los horarios ofrecidos viejos.
+  - **1E:** que el dentista ajuste los mensajes fijos y vea los escalados en el panel.
 
 ### 2026-10-29 · Hito 1B · WhatsApp de ida y vuelta
 
@@ -41,7 +106,7 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
     - Todo pasa por `audit_log`.
     - Un doble toque envía una vez.
     - Con la ventana cerrada sale `retomar_conversacion` una sola vez y el texto espera a que el paciente conteste; si no contesta en 24 h, queda como no enviado.
-  - **Bot de eco temporal** (`ECHO_BOT_ENABLED`, prohibido en producción). Guía para probarlo: `docs/probar-eco.md`.
+  - **Bot de eco temporal** (`ECHO_BOT_ENABLED`, prohibido en producción). Guía para probarlo: `docs/probar-eco.md` (en el 1C la reemplazó `docs/probar-bot.md`).
 - **Evidencia:**
   - `uv run pytest`: **370 passed**, 185 más que en el 1A. Incluyen las pruebas con los ejemplos oficiales de Meta (`backend/tests/fixtures/meta`):
     - un mensaje entregado dos veces se guarda y se contesta una;
