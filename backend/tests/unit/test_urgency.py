@@ -27,6 +27,10 @@ SHOULD_FIRE = [
     ("oiga es que me duele muchisimo la muela ya no aguanto", PAIN),
     ("buenas noches, me duelen mucho los dientes de abajo", PAIN),
     ("a mi hijo le duele muchísimo la muela", PAIN),
+    ("a mi hijo le duele muchísimo, ¿atienden a los niños?", PAIN),
+    ("buenas noches a todos, a mi hija le duele muchísimo la muela", PAIN),
+    ("¿atienden a los niños? a mi hijo le duele mucho la muela", PAIN),
+    ("¿atienden a los niños?\na mi hija le duele muchísimo, no ha dormido", PAIN),
     ("buenas, dolor de muela muy fuerte", PAIN),
     ("dolor de muela insoportable", PAIN),
     ("me duele un montón", PAIN),
@@ -159,6 +163,12 @@ def test_questions_and_ordinary_messages_do_not_fire(text: str) -> None:
 def test_questions_about_a_procedure_and_a_childs_tooth_on_its_own_are_doubts(text: str) -> None:
     """Jared, P14: they go to the AI as questions; with a fall or a blow they are urgencies."""
     assert detect_urgency(text, DEFAULT_SIGNALS) is None
+
+
+@pytest.mark.parametrize("text", ["me lastimé la boca con una tostada", "me mordí y me lastimé el labio"])
+def test_false_alarms_accepted_to_catch_a_hurt_mouth(text: str) -> None:
+    """revisor-clinico: not emergencies, but the price of catching "se lastimó la boca en el recreo"."""
+    assert detect_urgency(text, DEFAULT_SIGNALS) == TRAUMA
 
 
 def test_the_task_asks_for_at_least_30_that_fire_and_15_that_do_not() -> None:

@@ -108,9 +108,10 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915 - the steps of 
     paused = conversation.bot_paused_until is not None and conversation.bot_paused_until > now
     bot_on = clinic.bot_enabled and conversation.status == "bot" and not paused
     # Whatever way the turn ends, what a patient who has not accepted wrote is erased after 24 h,
-    # but only if the bot answers this chat or already showed the notice: with the bot off, the
-    # clinic keeps its inbox as it always did.
-    erase_later = not profile.consented and (bot_on or requested_at is not None)
+    # but only if the bot answers this chat or showed the notice in the last 24 h: with the bot
+    # off, or without a notice to show, the clinic keeps its inbox as it always did.
+    noticed = requested_at is not None and now - requested_at < CONSENT_WINDOW
+    erase_later = not profile.consented and bool(clinic.notice_version) and (bot_on or noticed)
 
     async def finish(
         reply: BotReply | None,

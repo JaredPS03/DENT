@@ -442,6 +442,32 @@ async def test_with_the_bot_off_nothing_a_new_patient_writes_is_erased(
     assert await queued_count(db, {"kind": "erase_unconsented", "conversation_id": str(conversation_id)}) == 0
 
 
+async def test_a_notice_shown_long_ago_does_not_erase_what_comes_with_the_bot_off(
+    settings: Settings, db: Database, meta: FakeMeta, phone: str
+) -> None:
+    ctx = world(settings, db, meta)
+    conversation_id = await turn(ctx, db, phone, says(phone, "hola"))  # the notice, a month ago
+    match = {"kind": "erase_unconsented", "conversation_id": str(conversation_id)}
+    async with db.unscoped_transaction() as conn:  # that erasure already ran
+        await conn.execute(
+            "update pgmq.q_whatsapp_inbound set read_ct = 1 where message @> %s", (Jsonb(match),)
+        )
+    async with db.clinic_transaction(CLINIC_A) as conn:
+        await conn.execute(
+            "update public.conversations set consent_requested_at = now() - interval '30 days' where id = %s",
+            (conversation_id,),
+        )
+    admin_url = os.environ.get("TEST_ADMIN_DATABASE_URL", LOCAL_ADMIN_DATABASE_URL)
+    async with await psycopg.AsyncConnection.connect(admin_url, autocommit=True) as admin:
+        await admin.execute("update public.clinics set bot_enabled = false where id = %s", (CLINIC_A,))
+        try:
+            await turn(ctx, db, phone, says(phone, "hola de nuevo, quiero una cita"))
+        finally:
+            await admin.execute("update public.clinics set bot_enabled = true where id = %s", (CLINIC_A,))
+
+    assert await queued_count(db, match) == 1  # only the old one: nothing new is scheduled
+
+
 async def test_acepto_counts_even_when_the_team_has_the_chat(
     settings: Settings, db: Database, meta: FakeMeta, phone: str
 ) -> None:

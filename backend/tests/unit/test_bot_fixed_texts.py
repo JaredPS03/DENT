@@ -53,6 +53,8 @@ def test_the_doctor_article_reads_right_even_if_the_clinic_capitalized_it() -> N
     assert fixed.doctor_phrase("Dra. Pérez") == "la Dra. Pérez"
     assert "Ya avisé al Dr. Ramírez" in fixed.urgency(Voice("Sonrisa", "Dr. Ramírez", formal=False))
     assert fixed.doctor_phrase("Laura Pérez") == "Laura Pérez"
+    assert fixed.doctor_phrase("Doctora Pérez") == "la doctora Pérez"
+    assert fixed.doctor_phrase("Doctor Ramírez") == "el doctor Ramírez"
 
 
 def test_declining_hands_the_chat_to_the_team() -> None:

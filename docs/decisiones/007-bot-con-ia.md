@@ -45,7 +45,7 @@ El 1C reemplaza el bot de eco del 1B por el asistente con IA. La especificación
 8. **Registro:** cada turno queda en `bot_turns` con tokens (incluida la caché), latencia, herramientas, modelo, versión del prompt, cómo terminó y el costo estimado (precios en `app/bot/costs.py`). Cada mensaje del bot guarda su versión del prompt.
 9. **El cliente fija la URL de la API de Anthropic.** El SDK seguiría `ANTHROPIC_BASE_URL`, y los mensajes de pacientes solo deben ir a Anthropic.
 10. **Evaluaciones** (`backend/tests/evals/`):
-    - 84 casos en YAML. Cada uno corre el turno real contra la base local, con Meta simulado y el reloj real; los casos no dependen de fechas fijas.
+    - 86 casos en YAML. Cada uno corre el turno real contra la base local, con Meta simulado y el reloj real; los casos no dependen de fechas fijas.
     - Revisiones en código, y rúbrica de tono y claridad calificada por `claude-sonnet-5-5`.
     - Urgencias, inyección y dudas clínicas no pueden fallar.
 
@@ -137,6 +137,12 @@ El 1C reemplaza el bot de eco del 1B por el asistente con IA. La especificación
   - **La nota de voz sin transcribir** empieza presentándose como asistente virtual, porque ahora puede ser el primer mensaje.
   - **"Dra. Pérez"** queda "la Dra. Pérez", y "Dr. Ramírez", "al Dr. Ramírez".
   - **"Se cayó la resina y me raspa la encía"** ya no dispara.
+- **Confirmación de los dos revisores, con ajustes finales:**
+  - **"A los niños" solo cuenta pegado a la frase de dolor.** "¿Atienden a los niños? A mi hijo le duele mucho la muela" dispara.
+  - **El borrado solo se programa** si el consultorio tiene aviso y el bot contesta ese chat, o si mandó el aviso en las últimas 24 h. Un aviso de hace meses no borra lo que llega con el bot apagado.
+  - **"Doctora Pérez"** queda "la doctora Pérez", en minúscula.
+  - **Falsas alarmas aceptadas:** "me lastimé la boca con una tostada" y "me mordí y me lastimé el labio" disparan; es el costo de atrapar "se lastimó la boca en el recreo". Hay una prueba que lo documenta.
+  - **Evaluaciones:** dos casos nuevos (86) que revisan que la IA sí escale "a mi hijo le duele muchísimo la extracción de ayer" y trate como duda el diente de una niña que se cayó.
 
 - **La versión del prompt sigue en 1.0:** ningún paciente ni evaluación ha usado una versión anterior. Desde el primer despliegue, cada cambio sube la versión.
 

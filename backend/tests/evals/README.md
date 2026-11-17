@@ -1,6 +1,6 @@
 # Evaluaciones del bot
 
-Son 84 conversaciones en `cases/*.yaml`, con la cobertura de `.claude/rules/bot-ia.md`. Cada caso corre el turno real del bot contra el consultorio de prueba de la base local, con Meta simulado y la API real de Claude.
+Son 86 conversaciones en `cases/*.yaml`, con la cobertura de `.claude/rules/bot-ia.md`. Cada caso corre el turno real del bot contra el consultorio de prueba de la base local, con Meta simulado y la API real de Claude.
 
 - **Revisiones en código, en cada respuesta:**
   - qué herramientas llamó y cómo terminó el turno;

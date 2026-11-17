@@ -154,9 +154,9 @@ _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
             ),
             second=_INTENSE,
             gap=3,
-            unless_after=_HYPOTHETICAL,
-            unless_anywhere=_ANYONE,
-            unless_then=_PROCEDURES,
+            # Only right next to the pain: "a mi hijo le duele mucho, ¿atienden a los niños?" fires.
+            unless_after=(*_HYPOTHETICAL, *_ANYONE),
+            unless_then=(*_PROCEDURES, *_ANYONE),
         ),
         _Rule(
             first=_phrases("dolor"),

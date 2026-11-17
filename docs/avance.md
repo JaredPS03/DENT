@@ -41,11 +41,11 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
   - **Alertas al equipo:** plantilla `alerta_equipo` desde el número de Axon, una por persona y sin datos de salud.
   - **Prompt v1.0** con caché (`app/bot/prompts/v1.0.md`, copia exacta de `docs/prompt-del-bot.md`) y cliente de Anthropic con la URL fijada.
   - **Registro:** cada turno queda en `bot_turns` con tokens, caché, latencia, herramientas, versión del prompt, cómo terminó y su costo estimado.
-  - **Evaluaciones:** 84 casos en `backend/tests/evals/`, con revisiones en código y una rúbrica que califica `claude-sonnet-5-5`.
+  - **Evaluaciones:** 86 casos en `backend/tests/evals/`, con revisiones en código y una rúbrica que califica `claude-sonnet-5-5`.
   - **Se quitó el bot de eco.** Guía para probar: `docs/probar-bot.md`.
 - **Evidencia:**
-  - `uv run pytest`: **602 passed**, 232 más que en el 1B; las evaluaciones quedan fuera porque cuestan. Entre ellas:
-    - 120 frases del filtro de urgencia: 77 que disparan, 37 que no y 6 dudas de P14;
+  - `uv run pytest`: **609 passed**, 239 más que en el 1B; las evaluaciones quedan fuera porque cuestan. Entre ellas:
+    - 126 frases del filtro de urgencia: 81 que disparan, 37 que no, 6 dudas de P14 y 2 falsas alarmas aceptadas;
     - urgencia, y nota de voz sin transcribir, antes que el aviso y que la IA; con el chat tomado solo alerta, y respirar vuelve a alertar a los 10 minutos;
     - Acepto guarda la prueba y contesta lo que el paciente había escrito, y cuenta aunque el chat esté con el equipo; No acepto pasa al equipo con alerta; el borrado a las 24 h se programa en cualquier salida del turno;
     - no se agenda un horario que la IA no mostró, que se mostró en un mensaje que falló, ni la cita de otro paciente;
@@ -56,11 +56,11 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
   - CI en verde: [run 21](https://github.com/JaredPS03/DENT/actions/runs/44011671420) y [run 22](https://github.com/JaredPS03/DENT/actions/runs/44013603965).
   - **Evaluaciones: sin correr.** Llaman a la API real y en esta sesión no hay llave: la petición de credencial no se pudo mostrar y la API respondió 401. Sin la llave fallan de inmediato, en lugar de pasar en falso.
   - **`revisor-seguridad`, primera ronda:** 1 alto, 5 medios y 5 bajos, todos corregidos con su prueba (detalle en la decisión 007). El alto: el borrado a las 24 h podía tocar a un paciente que ya había aceptado un aviso anterior.
-  - **`revisor-seguridad`, segunda ronda:** 1 medio, 3 bajos y una nota, corregidos en `1345d1e`. Al confirmarlos encontró 2 medios y 1 bajo nuevos, corregidos con su prueba: un golpe en la boca de alguien con brackets había dejado de disparar; una nota de voz sin transcribir de quien no ha aceptado no llegaba al equipo; y un enlace del consultorio podía cargar otro dominio. Las confirmó y encontró 1 medio y 1 bajo más: el borrado a las 24 h no se programaba si el turno terminaba antes del aviso, y un Acepto en la misma ráfaga que un audio se perdía. Corregidos con su prueba. En la cuarta ronda encontró 1 medio y 1 bajo: los trabajos de borrado se multiplicaban con cada turno, y "me lastimé la boca" había dejado de disparar. Corregidos con su prueba. Su confirmación está en curso.
+  - **`revisor-seguridad`, segunda ronda:** 1 medio, 3 bajos y una nota, corregidos en `1345d1e`. Al confirmarlos encontró 2 medios y 1 bajo nuevos, corregidos con su prueba: un golpe en la boca de alguien con brackets había dejado de disparar; una nota de voz sin transcribir de quien no ha aceptado no llegaba al equipo; y un enlace del consultorio podía cargar otro dominio. Las confirmó y encontró 1 medio y 1 bajo más: el borrado a las 24 h no se programaba si el turno terminaba antes del aviso, y un Acepto en la misma ráfaga que un audio se perdía. Corregidos con su prueba. En la cuarta ronda encontró 1 medio y 1 bajo: los trabajos de borrado se multiplicaban con cada turno, y "me lastimé la boca" había dejado de disparar. Corregidos con su prueba y confirmados. Su último hallazgo ("a los niños" en otra parte del mensaje apagaba el dolor de un hijo) coincidió con el clínico y quedó corregido en el commit final.
   - **`revisor-clinico`:** tres rondas.
     - En la primera, el filtro de urgencia se amplió, el 911 quedó solo para respirar o tragar, y el prompt dejó de tranquilizar, dar cuidados o prometer.
     - En la segunda: fecha completa de los horarios, menos falsas alarmas, urgencias sin consentimiento marcadas como tales, y casos de evaluación más estrictos.
-    - En la tercera: un Acepto con el chat en manos del equipo no se guardaba (corregido); `escalar_a_humano` dice cuándo es urgente y cuándo normal; menos falsas alarmas (garganta inflamada por gripa, diente de leche); resúmenes con nombre y "Quiere: no se sabe"; la IA ve el texto que viene con una foto; y evaluaciones que exigen ofrecer valoración en las dudas clínicas. En la cuarta: con el bot apagado no se borra nada; los resúmenes dicen cuándo se borra lo que escribió; la nota de voz sin transcribir se presenta; "la Dra. Pérez". Su confirmación está en curso.
+    - En la tercera: un Acepto con el chat en manos del equipo no se guardaba (corregido); `escalar_a_humano` dice cuándo es urgente y cuándo normal; menos falsas alarmas (garganta inflamada por gripa, diente de leche); resúmenes con nombre y "Quiere: no se sabe"; la IA ve el texto que viene con una foto; y evaluaciones que exigen ofrecer valoración en las dudas clínicas. En la cuarta: con el bot apagado no se borra nada; los resúmenes dicen cuándo se borra lo que escribió; la nota de voz sin transcribir se presenta; "la Dra. Pérez". Confirmó la cuarta ronda; sus últimos ajustes ("a los niños" solo pegado al dolor, un aviso de hace meses no borra, "la doctora Pérez" y dos evaluaciones) quedaron en el commit final.
 - **Decisiones:** [007 · El bot con IA](decisiones/007-bot-con-ia.md). Jared decidió:
   - **SDK y alcance:** el SDK oficial `anthropic`; los precios del plan Esencial (2,490 de instalación y 1,490 al mes) y el Completo después.
   - **Urgencias:** con el chat en pausa, solo se alerta al equipo; la señal de respirar o tragar no se puede quitar.
@@ -87,8 +87,12 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
     - **P13:** botones "Hoy" o "Mañana" tocados al día siguiente: usar siempre el día de la semana o que venzan a medianoche.
     - **P15:** si el dentista edita el mensaje de urgencia (1E), la línea del 911 queda fija.
     - **P16:** cómo le llega el aviso de privacidad a quien entró por urgencia o por nota de voz y quedó con el equipo; por ejemplo, un botón "Enviar aviso" en el panel (1E).
+    - **P18:** consecuencias de P14 para que las confirmes: ya no disparan "a mi mamá le duele mucho la extracción que le hicieron ayer", "a mi esposo le duele horrible el implante" ni "a mi hijo se le salió un diente jugando futbol" (no dice golpe ni caída). La IA es la segunda revisión.
+    - **P19:** si el primer turno fue urgencia o nota de voz y el chat se quedó con el equipo, lo que el paciente escriba después de las primeras 24 h ya no se borra, porque el bot nunca mandó el aviso. Se resuelve con P16.
     - **P17:** dos casos que hoy no disparan y la IA revisa: "traigo brackets, se me rompió un diente" (el bracket va justo antes) y "se le inflamó la garganta después de la extracción" (sin "no puede tragar").
   - **1D:** tope diario de transcripciones por consultorio, avisos de mensajes sin respuesta y limpieza de los horarios ofrecidos viejos.
+  - **Prueba intermitente:** `test_a_patient_who_never_comes_back_leaves_the_text_not_sent` (mensaje en espera que vence, del 1B) falló una vez en 9 corridas completas y no se reprodujo. Hay que revisarla si vuelve a fallar en CI.
+  - **1E:** no dejar encender el bot sin aviso de privacidad ni sin al menos un teléfono de alertas (P7).
   - **1E:** que el dentista ajuste los mensajes fijos y vea los escalados en el panel.
 
 ### 2026-10-29 · Hito 1B · WhatsApp de ida y vuelta

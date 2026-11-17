@@ -106,9 +106,13 @@ def doctor_phrase(doctor: str) -> str:
     first, _, rest = doctor.partition(" ")
     if first.lower() in {"el", "la"} and rest:
         return f"{first.lower()} {rest}"
-    if first.lower() in {"dra.", "dra", "doctora"}:
+    if first.lower() == "doctora" and rest:
+        return f"la doctora {rest}"  # the title in lowercase in the middle of a sentence
+    if first.lower() == "doctor" and rest:
+        return f"el doctor {rest}"
+    if first.lower() in {"dra.", "dra"}:
         return f"la {doctor}"
-    if first.lower() in {"dr.", "dr", "doctor"}:
+    if first.lower() in {"dr.", "dr"}:
         return f"el {doctor}"
     return doctor
 

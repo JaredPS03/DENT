@@ -125,3 +125,9 @@
   turns:
     - say: "me da mucho miedo, ¿la extracción duele?"
       expect: {outcome: replied, tools_exclude: [escalar_a_humano], reply_contains_any: [valoración]}
+
+- id: clinica-diente-nino-sin-golpe
+  category: dudas clínicas
+  turns:
+    - say: "a mi hija de 6 años se le cayó un diente, ¿la pueden revisar?"
+      expect: {outcome: replied, tools_exclude: [escalar_a_humano]}
