@@ -66,6 +66,10 @@ class _Rule:
     unless_after: tuple[Phrase, ...] = ()
     # Not when the message mentions one of these: "un diente de leche" is not an emergency.
     unless_anywhere: tuple[Phrase, ...] = ()
+    # Not when one of these is within `near` words of `first`: "se cayó la resina" is not a blow,
+    # but "se le cayó un diente, trae brackets" is.
+    unless_near: tuple[Phrase, ...] = ()
+    near: int = 2
 
 
 _INTENSE = _phrases(
@@ -198,7 +202,14 @@ _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
         ),
     ),
     "hinchazón de cara o cuello": (
-        _Rule(first=_phrases("hinch*", "inflam*"), second=_FACE, gap=4, either_order=True),
+        _Rule(first=_phrases("hinch*"), second=_FACE, gap=4, either_order=True),
+        # "La garganta inflamada" is usually a cold; a throat that swells is not.
+        _Rule(
+            first=_phrases("inflam*"),
+            second=tuple(place for place in _FACE if place != ("garganta",)),
+            gap=4,
+            either_order=True,
+        ),
         _Rule(
             first=_phrases("bola", "bolita", "abultad*", "deformad*"),
             second=_FACE_AND_NECK,
@@ -259,20 +270,14 @@ _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
         ),
         # A fall or a hit on the mouth or the face is a blow, braces or not.
         _Rule(first=_phrases("se cayo", "se pego"), second=_SOFT_PLACES, gap=6, either_order=True),
-        # Verbs with two meanings: "se cayó la resina" or "me lastimé con el bracket" are not blows.
+        # Verbs with two meanings: "se pegó la resina" or "me lastimé con el bracket" are not
+        # blows. A tooth that "se cayó" is the rule of a tooth that came out, below.
         _Rule(
-            first=_phrases("se cayo", "se pego"),
+            first=_phrases("se pego", "me lastime", "se lastimo"),
             second=_TEETH,
             gap=6,
             either_order=True,
-            unless_anywhere=_PROSTHESES,
-        ),
-        _Rule(
-            first=_phrases("me lastime", "se lastimo"),
-            second=_HIT_PLACES,
-            gap=6,
-            either_order=True,
-            unless_anywhere=_PROSTHESES,
+            unless_near=_PROSTHESES,
         ),
         _Rule(
             first=_phrases(
@@ -298,7 +303,8 @@ _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
             second=_TEETH,
             gap=3,
             either_order=True,
-            unless_anywhere=(*_PROSTHESES, *_phrases("de leche")),
+            unless_anywhere=_phrases("de leche"),
+            unless_near=_PROSTHESES,
         ),
         # A tooth that came out: "se me salió" is a tooth lost, "me salió" is one growing in.
         _Rule(
@@ -316,7 +322,8 @@ _RULES_BY_SIGNAL: dict[str, tuple[_Rule, ...]] = {
             second=_TEETH,
             gap=3,
             either_order=True,
-            unless_anywhere=(*_PROSTHESES, *_phrases("de leche", "juicio", "primer diente", "primera muela")),
+            unless_anywhere=_phrases("de leche", "juicio", "primer diente", "primera muela"),
+            unless_near=_PROSTHESES,
         ),
     ),
     "dificultad para tragar o respirar": (
@@ -414,6 +421,7 @@ def _matches(rule: _Rule, tokens: tuple[str, ...]) -> bool:
         for phrase in rule.first
         for span in _occurrences(tokens, phrase)
         if not _right_after(tokens, span[0], rule.unless_after)
+        and not _near(tokens, span, rule.unless_near, rule.near)
     ]
     if not rule.second:
         return bool(firsts)
@@ -438,6 +446,17 @@ def _occurrences(tokens: Sequence[str], phrase: Phrase) -> list[tuple[int, int]]
 
 def _same(token: str, word: str) -> bool:
     return token.startswith(word[:-1]) if word.endswith("*") else token == word
+
+
+def _near(tokens: Sequence[str], span: tuple[int, int], phrases: Iterable[Phrase], near: int) -> bool:
+    """Whether one of `phrases` ends at most `near` words before the span or starts at most `near`
+    words after it."""
+    start, end = span
+    return any(
+        0 <= start - other_end <= near or 0 <= other_start - end <= near
+        for phrase in phrases
+        for other_start, other_end in _occurrences(tokens, phrase)
+    )
 
 
 def _right_after(tokens: Sequence[str], start: int, phrases: Iterable[Phrase]) -> bool:

@@ -50,6 +50,7 @@ SHOULD_FIRE = [
     ("se me hincharon los labios", SWELLING),
     ("tengo la cara hinchadísima", SWELLING),
     ("tengo la lengua hinchada", SWELLING),
+    ("se me está hinchando la garganta", SWELLING),
     # Fever with dental pain
     ("tengo fiebre y me duele la muela", FEVER),
     ("tengo calentura y la encia hinchada", FEVER),
@@ -70,6 +71,10 @@ SHOULD_FIRE = [
     ("se cayó de la bici y se pegó en la cara, usa placa", TRAUMA),
     ("se cayó, tiene brackets y le sangra la boca", TRAUMA),
     ("hola, tengo brackets\nmi hijo se cayó y se pegó en la boca", TRAUMA),
+    ("se cayó y se pegó en el diente, trae brackets", TRAUMA),
+    ("se le cayó un diente, trae brackets", TRAUMA),
+    ("se me rompió un diente, traigo brackets", TRAUMA),
+    ("mi hijo se cayó en la escuela y se le salió un diente", TRAUMA),
     # Trouble swallowing or breathing
     ("no puedo tragar", BREATHING),
     ("me cuesta respirar", BREATHING),
@@ -115,6 +120,12 @@ SHOULD_NOT_FIRE = [
     "tengo una bolita en el párpado",
     "me salió una bolita en el labio",
     "tengo una bolita en la lengua",
+    "no voy a poder ir, tengo gripa y la garganta inflamada",
+    "ya se cayó el diente de leche de mi hijo",
+    "me lastimé la encía con el cepillo",
+    "la resina se me cayó del diente",
+    "se me rompió la resina del diente",
+    "a mi hijo se le cayó el bracket del diente",
 ]
 
 
@@ -126,6 +137,18 @@ def test_urgent_messages_fire_with_their_signal(text: str, signal: str) -> None:
 @pytest.mark.parametrize("text", SHOULD_NOT_FIRE)
 def test_questions_and_ordinary_messages_do_not_fire(text: str) -> None:
     assert detect_urgency(text, DEFAULT_SIGNALS) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "¿le duele mucho a los niños la extracción?",
+        "a mi hija de 6 años se le cayó un diente, ¿la pueden revisar?",
+    ],
+)
+def test_false_alarms_accepted_while_jared_decides(text: str) -> None:
+    """The filter errs on the side of firing; whether these should stay is P14 in docs/avance.md."""
+    assert detect_urgency(text, DEFAULT_SIGNALS) is not None
 
 
 def test_the_task_asks_for_at_least_30_that_fire_and_15_that_do_not() -> None:

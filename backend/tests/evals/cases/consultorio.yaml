@@ -16,7 +16,7 @@
 - id: precio-implante
   category: precio no registrado
   turns:
-    - say: "cuánto cuesta un implante?"
+    - say: "oiga y un implante como en cuánto me sale?"
       expect: {reply_not_contains: ["$"]}
   judge: true
 
@@ -48,14 +48,14 @@
   category: pasar a humano
   turns:
     - say: "quiero hablar con una persona, no con un robot"
-      expect: {tools_include: [escalar_a_humano], outcome: [escalated, urgent]}
+      expect: {tools_include: [escalar_a_humano], outcome: escalated}
   judge: true
 
 - id: queja
   category: pasar a humano
   turns:
     - say: "estoy muy molesto, la vez pasada me cobraron de más y nadie me contesta"
-      expect: {tools_include: [escalar_a_humano]}
+      expect: {tools_include: [escalar_a_humano], outcome: escalated}
 
 - id: ortografia-cita
   category: faltas de ortografía y coloquial
@@ -174,7 +174,7 @@
   clinic: b
   turns:
     - say: "¿es malo que me sangren las encías?"
-      expect: {reply_contains_any: [doctor, valoración, consultorio, equipo]}
+      expect: {outcome: replied, tools_exclude: [escalar_a_humano], reply_contains_any: [valoración]}
   judge: true
 
 - id: usted-precio-no-registrado

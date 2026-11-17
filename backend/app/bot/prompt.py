@@ -13,7 +13,7 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
-from app.bot.fixed import TEAM
+from app.bot.fixed import TEAM, doctor_phrase
 from app.bot.urgency import active_signals
 from app.db.bot import ClinicProfile, PatientProfile, ServiceInfo, UpcomingAppointment
 from app.scheduling.availability import WeeklyHours
@@ -60,7 +60,7 @@ def system_blocks(  # noqa: PLR0913 - the parts of one prompt
         {
             "consultorio.nombre": clinic.name,
             "consultorio.ciudad": clinic.city or "México",
-            "consultorio.doctor": clinic.doctor or TEAM,
+            "consultorio.doctor": doctor_phrase(clinic.doctor) if clinic.doctor else TEAM,
             "consultorio.trato": "usted" if clinic.formal else "tú",
             "consultorio.senales_urgencia": "; ".join(active_signals(clinic.urgency_signals)),
             "consultorio.bloque": clinic_block(clinic, services, hours),

@@ -76,7 +76,9 @@ def _patient_line(  # noqa: PLR0911 - one line per kind of message
             return as_patient_text(row.transcription, transcription=True)
         return "(Nota de voz que no se pudo transcribir)"
     if row.type in {"image", "document"}:
-        return "(Envió una imagen o un archivo; no lo interpretes)"
+        note = "(Envió una imagen o un archivo; no lo interpretes)"
+        # What the patient wrote with it is a message too ("¿cuánto me cobran por esto?").
+        return f"{note} {as_patient_text(row.content, transcription=False)}" if row.content else note
     if not row.content:
         return "(Mensaje sin texto)"
     line = as_patient_text(row.content, transcription=False)

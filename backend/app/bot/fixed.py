@@ -100,8 +100,23 @@ def consent_declined(voice: Voice) -> str:
     )
 
 
+def doctor_phrase(doctor: str) -> str:
+    """The article in lowercase, for the middle of a sentence: "La doctora Pérez" is "la doctora Pérez"."""
+    article, _, rest = doctor.partition(" ")
+    if article.lower() in {"el", "la"} and rest:
+        return f"{article.lower()} {rest}"
+    return doctor
+
+
+def patient_label(name: str | None) -> str:
+    """The first name for the team's summaries, or that there is none."""
+    first = name.split()[0] if name and name.split() else None
+    return first or "sin nombre registrado"
+
+
 def _to(person: str) -> str:
-    """'a la doctora Pérez', 'al equipo del consultorio'."""
+    """'a la doctora Pérez', 'al equipo del consultorio', even if the clinic wrote 'El Dr. Ramírez'."""
+    person = doctor_phrase(person)
     if person.startswith("el "):
         return "al " + person.removeprefix("el ")
     return "a " + person

@@ -44,10 +44,10 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
   - **Evaluaciones:** 84 casos en `backend/tests/evals/`, con revisiones en código y una rúbrica que califica `claude-sonnet-5-5`.
   - **Se quitó el bot de eco.** Guía para probar: `docs/probar-bot.md`.
 - **Evidencia:**
-  - `uv run pytest`: **573 passed**, 203 más que en el 1B; las evaluaciones quedan fuera porque cuestan. Entre ellas:
-    - 97 frases del filtro de urgencia: 69 que disparan y 28 que no;
+  - `uv run pytest`: **590 passed**, 220 más que en el 1B; las evaluaciones quedan fuera porque cuestan. Entre ellas:
+    - 108 frases del filtro de urgencia: 74 que disparan y 34 que no, más 2 falsas alarmas aceptadas mientras Jared decide (P14);
     - urgencia, y nota de voz sin transcribir, antes que el aviso y que la IA; con el chat tomado solo alerta, y respirar vuelve a alertar a los 10 minutos;
-    - Acepto guarda la prueba y contesta lo que el paciente había escrito; No acepto pasa al equipo con alerta; el borrado a las 24 h;
+    - Acepto guarda la prueba y contesta lo que el paciente había escrito, y cuenta aunque el chat esté con el equipo; No acepto pasa al equipo con alerta; el borrado a las 24 h se programa en cualquier salida del turno;
     - no se agenda un horario que la IA no mostró, que se mostró en un mensaje que falló, ni la cita de otro paciente;
     - caché del prompt, herramientas estrictas y texto del paciente que no rompe sus etiquetas;
     - respaldo ante falla del modelo, sin `responder`, con más de 6 herramientas o en el último reintento;
@@ -56,11 +56,11 @@ Bitácora del proyecto. Claude la actualiza al cerrar cada hito y la lee al empe
   - CI en verde: [run 21](https://github.com/JaredPS03/DENT/actions/runs/44011671420) y [run 22](https://github.com/JaredPS03/DENT/actions/runs/44013603965).
   - **Evaluaciones: sin correr.** Llaman a la API real y en esta sesión no hay llave: la petición de credencial no se pudo mostrar y la API respondió 401. Sin la llave fallan de inmediato, en lugar de pasar en falso.
   - **`revisor-seguridad`, primera ronda:** 1 alto, 5 medios y 5 bajos, todos corregidos con su prueba (detalle en la decisión 007). El alto: el borrado a las 24 h podía tocar a un paciente que ya había aceptado un aviso anterior.
-  - **`revisor-seguridad`, segunda ronda:** 1 medio, 3 bajos y una nota, corregidos en `1345d1e`. Al confirmarlos encontró 2 medios y 1 bajo nuevos, corregidos con su prueba: un golpe en la boca de alguien con brackets había dejado de disparar; una nota de voz sin transcribir de quien no ha aceptado no llegaba al equipo; y un enlace del consultorio podía cargar otro dominio. Su confirmación de estas tres está en curso.
+  - **`revisor-seguridad`, segunda ronda:** 1 medio, 3 bajos y una nota, corregidos en `1345d1e`. Al confirmarlos encontró 2 medios y 1 bajo nuevos, corregidos con su prueba: un golpe en la boca de alguien con brackets había dejado de disparar; una nota de voz sin transcribir de quien no ha aceptado no llegaba al equipo; y un enlace del consultorio podía cargar otro dominio. Las confirmó y encontró 1 medio y 1 bajo más: el borrado a las 24 h no se programaba si el turno terminaba antes del aviso, y un Acepto en la misma ráfaga que un audio se perdía. Corregidos con su prueba. Su confirmación de estas dos está en curso.
   - **`revisor-clinico`:** tres rondas.
     - En la primera, el filtro de urgencia se amplió, el 911 quedó solo para respirar o tragar, y el prompt dejó de tranquilizar, dar cuidados o prometer.
     - En la segunda: fecha completa de los horarios, menos falsas alarmas, urgencias sin consentimiento marcadas como tales, y casos de evaluación más estrictos.
-    - La tercera ronda, sobre los textos de `1345d1e`, está en curso.
+    - En la tercera: un Acepto con el chat en manos del equipo no se guardaba (corregido); `escalar_a_humano` dice cuándo es urgente y cuándo normal; menos falsas alarmas (garganta inflamada por gripa, diente de leche); resúmenes con nombre y "Quiere: no se sabe"; la IA ve el texto que viene con una foto; y evaluaciones que exigen ofrecer valoración en las dudas clínicas. Su confirmación está en curso.
 - **Decisiones:** [007 · El bot con IA](decisiones/007-bot-con-ia.md). Jared decidió:
   - **SDK y alcance:** el SDK oficial `anthropic`; los precios del plan Esencial (2,490 de instalación y 1,490 al mes) y el Completo después.
   - **Urgencias:** con el chat en pausa, solo se alerta al equipo; la señal de respirar o tragar no se puede quitar.

@@ -47,7 +47,7 @@
 - id: agendar-audio-limpieza
   category: agendar por audio
   turns:
-    - audio: "hola buenas tardes oiga quería ver si me pueden dar cita para una limpieza esta semana de preferencia en la tarde"
+    - audio: "buenas tardes eh quisiera saber si tienen lugar para una limpieza el viernes o el sábado en la mañana"
       expect: {tools_include: [buscar_disponibilidad], offers_slots: true}
   judge: true
 

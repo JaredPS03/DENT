@@ -134,6 +134,14 @@ def test_the_slots_already_shown_close_the_history() -> None:
     )
 
 
+def test_the_text_sent_with_a_photo_reaches_the_ai_as_patient_text() -> None:
+    messages = build_messages([row("inbound", "¿cuánto me cobran por arreglar esto?", type="image")], {}, TZ)
+    assert messages[0]["content"] == (
+        "(Envió una imagen o un archivo; no lo interpretes) "
+        "<mensaje_paciente>¿cuánto me cobran por arreglar esto?</mensaje_paciente>"
+    )
+
+
 def test_a_label_written_yesterday_comes_with_its_real_date() -> None:
     # Offered Monday night as "Mañana 10:30 am"; read on Tuesday it would mean Wednesday.
     start = datetime(2026, 11, 17, 16, 30, tzinfo=UTC)

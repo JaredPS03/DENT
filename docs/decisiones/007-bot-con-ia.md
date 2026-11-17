@@ -109,6 +109,22 @@ El 1C reemplaza el bot de eco del 1B por el asistente con IA. La especificación
   - **Prompt:** la regla 8 aclara que lo de no poner síntomas es solo sin consentimiento, y fotos y archivos no se prometen revisar.
   - **Resúmenes:** "Llámale o escríbele ya" en urgencias sin respuesta, y "Quiere: no se sabe" en la nota de voz.
   - **Evaluaciones:** 2 casos nuevos (84 en total), revisa que se agende justo el horario elegido y la rúbrica ignora los textos fijos.
+### Tercera ronda
+
+- **revisor-seguridad,** al confirmar la segunda ronda:
+  - **Borrado a las 24 h en cualquier salida:** se programaba solo al mandar el aviso, así que una urgencia o una nota de voz sin transcribir de quien no ha aceptado se guardaban sin plazo. Ahora cada turno de un paciente sin consentimiento programa el borrado en la misma transacción que cierra el turno.
+  - **Acepto se registra primero:** antes de cualquier otra cosa, también con el chat en pausa o con el equipo, o con una urgencia o un audio en la misma ráfaga. Antes se perdía y luego se borraban sus mensajes aunque hubiera aceptado.
+  - **Prótesis cerca, no en todo el mensaje:** la excepción de resinas, coronas y brackets solo aplica si están a dos palabras del verbo. "Se le cayó un diente, trae brackets" dispara; "la resina se me cayó del diente", no.
+- **revisor-clinico:**
+  - **`escalar_a_humano`** dice cuándo va con prioridad urgente (cualquier señal de urgencia; ante la duda, urgente) y cuándo normal; ante una duda clínica, primero una valoración.
+  - **Menos falsas alarmas:** la garganta "inflamada" de una gripa, el diente de leche que se cayó y "me lastimé la encía con el cepillo" ya no disparan; "se me está hinchando la garganta", sí.
+  - **Resúmenes para el equipo** con el nombre del paciente también sin consentimiento, "Quiere: no se sabe" cuando no se sabe, y "se borra a las 24 h".
+  - **Prompt:** la regla 4 explica la fecha completa del horario y su ejemplo usa el formato real; sin consentimiento, la IA responde solo con texto.
+  - **Una foto con texto:** la IA ve lo que el paciente escribió junto a la foto.
+  - **"El Dr. Ramírez"** con mayúscula ya no queda "Ya avisé a El Dr. Ramírez".
+  - **Evaluaciones:** las dudas clínicas exigen respuesta sin escalar y con valoración; pedir una persona exige escalado normal y la urgencia "¿es normal que me duela muchísimo?" exige urgente; tres casos ya no copian los ejemplos del prompt; la rúbrica castiga pedir datos de más.
+- **Falsas alarmas que se quedan mientras Jared decide (P14):** "¿le duele mucho a los niños la extracción?" y "a mi hija de 6 años se le cayó un diente". Hay una prueba que las documenta.
+
 - **La versión del prompt sigue en 1.0:** ningún paciente ni evaluación ha usado una versión anterior. Desde el primer despliegue, cada cambio sube la versión.
 
 ## Alternativas

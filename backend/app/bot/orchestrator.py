@@ -7,10 +7,10 @@
    message and stop. Before the privacy notice, so a patient in pain always gets help. A voice
    note nobody could transcribe might be an urgency too: it goes to the team, also before the
    notice.
-3. Consent gate: Acepto stores the proof and the turn goes on to answer what the patient wrote
-   before; No acepto hands the chat to the team; a first message gets the notice; later ones get
-   general answers from the AI with the notice under them. What a patient who never accepted
-   wrote is erased 24 h later.
+3. Consent gate: Acepto stores the proof (first of all, even if a person has the chat) and the
+   turn goes on to answer what the patient wrote before; No acepto hands the chat to the team;
+   a first message gets the notice; later ones get general answers from the AI with the notice
+   under them. What a patient who never accepted wrote is erased 24 h later.
 4. The AI with its tools. If anything fails, the fixed fallback message goes out and the chat
    passes to a person with a summary: the patient is never left without an answer.
 
@@ -30,7 +30,7 @@ from uuid import UUID
 from app.bot import fixed
 from app.bot.agent import AgentResult, run_agent
 from app.bot.costs import estimate_microusd
-from app.bot.fixed import Voice
+from app.bot.fixed import Voice, patient_label
 from app.bot.history import build_messages
 from app.bot.prompt import PatientContext, system_blocks
 from app.bot.reply import (
@@ -80,7 +80,7 @@ class BotReply:
     hand_over: bool = False
 
 
-async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913 - the steps of one turn, each with its own exit
+async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915 - the steps of one turn, each with its own exit
     ctx: WorkerContext,
     *,
     clinic_id: UUID,
@@ -103,7 +103,10 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913 - the steps of one turn,
         profile = await data.patient_profile(conn, conversation.patient_id, clinic.notice_version)
         requested_at = await data.consent_requested_at(conn, conversation_id)
     voice = Voice(clinic.name, clinic.doctor, clinic.formal)
+    profile = await _record_acepto(ctx, clinic, conversation.patient_id, profile, batch)
     signal = detect_urgency(_burst_text(batch), active_signals(clinic.urgency_signals))
+    # Whatever way the turn ends, what a patient who has not accepted wrote is erased after 24 h.
+    erase_later = not profile.consented
     paused = conversation.bot_paused_until is not None and conversation.bot_paused_until > now
     bot_on = clinic.bot_enabled and conversation.status == "bot" and not paused
 
@@ -124,6 +127,7 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913 - the steps of one turn,
             outcome=outcome,
             result=result,
             hand_over=hand_over,
+            erase_later=erase_later,
             latency_ms=round((time.monotonic() - started) * 1000),
         )
 
@@ -179,7 +183,6 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913 - the steps of one turn,
             ctx,
             clinic=clinic,
             conversation_id=conversation_id,
-            patient_id=conversation.patient_id,
             profile=profile,
             batch=batch,
             requested_at=requested_at,
@@ -243,12 +246,31 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913 - the steps of one turn,
     return await finish(_fixed(fixed.fallback(voice)), "fallback", result, hand_over=True)
 
 
+async def _record_acepto(
+    ctx: WorkerContext,
+    clinic: data.ClinicProfile,
+    patient_id: UUID,
+    profile: data.PatientProfile,
+    batch: Sequence[PendingMessage],
+) -> data.PatientProfile:
+    """Acepto on the current notice counts even if a person has the chat, the bot is off or the
+    turn ends early: the consent is the patient's, and what they wrote must not be erased after
+    they gave it."""
+    if profile.consented or not clinic.notice_version:
+        return profile
+    tap = _consent_tap(batch, clinic.notice_version)
+    if tap is None or tap[0] != consent_accept_id(clinic.notice_version):
+        return profile
+    async with ctx.db.clinic_transaction(clinic.id) as conn:
+        await data.accept_consent(conn, clinic.id, patient_id, clinic.notice_version, tap[1])
+    return data.PatientProfile(profile.name, consented=True, returning=profile.returning)
+
+
 async def _consent_gate(  # noqa: PLR0913 - what the gate looks at
     ctx: WorkerContext,
     *,
     clinic: data.ClinicProfile,
     conversation_id: UUID,
-    patient_id: UUID,
     profile: data.PatientProfile,
     batch: Sequence[PendingMessage],
     requested_at: datetime | None,
@@ -261,10 +283,6 @@ async def _consent_gate(  # noqa: PLR0913 - what the gate looks at
     assert clinic.notice_version is not None  # noqa: S101
     voice = Voice(clinic.name, clinic.doctor, clinic.formal)
     tap = _consent_tap(batch, clinic.notice_version)
-    if tap is not None and tap[0] == consent_accept_id(clinic.notice_version):
-        async with ctx.db.clinic_transaction(clinic.id) as conn:
-            await data.accept_consent(conn, clinic.id, patient_id, clinic.notice_version, tap[1])
-        return data.PatientProfile(profile.name, consented=True, returning=profile.returning), None
     if tap is not None and tap[0] == CONSENT_DECLINE_ID:
         # The message promises that someone answers: the team is alerted, without details.
         await escalate(
@@ -281,11 +299,6 @@ async def _consent_gate(  # noqa: PLR0913 - what the gate looks at
     if requested_at is None or now - requested_at >= CONSENT_WINDOW:
         async with ctx.db.clinic_transaction(clinic.id) as conn:
             await data.mark_consent_requested(conn, conversation_id)
-            await enqueue(
-                conn,
-                EraseUnconsentedJob(clinic_id=clinic.id, conversation_id=conversation_id),
-                delay_seconds=int(CONSENT_WINDOW.total_seconds()) + 60,
-            )
         notice = fixed.consent_notice(voice, clinic.notice_url)
         return BotReply(notice, outbound.buttons(notice, consent_buttons(clinic.notice_version)))
     return profile, ConsentRequest(fixed.consent_reminder(voice, clinic.notice_url), clinic.notice_version)
@@ -350,11 +363,13 @@ async def _finish(  # noqa: PLR0913 - the turn's results, written together
     outcome: Outcome | None,
     result: AgentResult | None,
     hand_over: bool,
+    erase_later: bool,
     latency_ms: int,
 ) -> bool:
     """Queues the reply, marks the slots it shows, hands the chat to a person if the turn
-    escalated, marks the batch handled and logs the turn, all in one transaction: a turn that
-    fails before this point is retried as if it never happened."""
+    escalated, schedules the erasure of what a patient without consent wrote, marks the batch
+    handled and logs the turn, all in one transaction: a turn that fails before this point is
+    retried as if it never happened."""
     async with ctx.db.clinic_transaction(clinic_id) as conn:
         if not await conversations.holds_lease(conn, conversation_id, lease_token):
             raise LeaseLostError
@@ -377,6 +392,14 @@ async def _finish(  # noqa: PLR0913 - the turn's results, written together
                 await data.mark_slots_shown(conn, conversation_id, message.id, reply.slot_keys)
         if hand_over:
             await conversations.set_status(conn, conversation_id, "human")
+        if erase_later:
+            # Also when the turn ends early (urgency, voice note, chat with the team): the job
+            # erases what is older than 24 h and comes back for the rest.
+            await enqueue(
+                conn,
+                EraseUnconsentedJob(clinic_id=clinic_id, conversation_id=conversation_id),
+                delay_seconds=int(CONSENT_WINDOW.total_seconds()) + 60,
+            )
         await conversations.mark_handled(conn, [message.id for message in batch])
         if outcome is not None:
             usage = result.usage if result else None
@@ -475,13 +498,8 @@ def _clinic_hosts(clinic: data.ClinicProfile) -> frozenset[str]:
     return frozenset(host for host in hosts if host)
 
 
-def _patient_label(name: str | None) -> str:
-    first = name.split()[0] if name and name.split() else None
-    return first or "sin nombre registrado"
-
-
 def _urgent_summary(name: str | None, signal: str, *, answered: bool) -> str:
-    wants = f"Paciente: {_patient_label(name)}. Quiere: atención por una posible urgencia ({signal})."
+    wants = f"Paciente: {patient_label(name)}. Quiere: atención por una posible urgencia ({signal})."
     if answered:
         return (
             f"{wants} Intentado: se le mandó el mensaje de urgencia, con el 911 si le cuesta "
@@ -495,14 +513,15 @@ def _urgent_summary(name: str | None, signal: str, *, answered: bool) -> str:
 
 def _fallback_summary(name: str | None) -> str:
     return (
-        f"Paciente: {_patient_label(name)}. Quiere: revisa su último mensaje; el asistente no pudo "
-        "contestarlo por una falla técnica. Intentado: se le dijo que el equipo le responderá."
+        f"Paciente: {patient_label(name)}. Quiere: no se sabe; el asistente no pudo contestar su "
+        "último mensaje por una falla técnica. Intentado: se le dijo que el equipo le responderá. "
+        "Revisa la conversación y contéstale."
     )
 
 
 def _unheard_summary(name: str | None) -> str:
     return (
-        f"Paciente: {_patient_label(name)}. Quiere: no se sabe; mandó una nota de voz que no se pudo "
+        f"Paciente: {patient_label(name)}. Quiere: no se sabe; mandó una nota de voz que no se pudo "
         "transcribir. Intentado: se le dijo que el equipo la escuchará; escúchala en la bandeja y "
         "contéstale."
     )
@@ -510,7 +529,8 @@ def _unheard_summary(name: str | None) -> str:
 
 def _declined_summary(name: str | None) -> str:
     return (
-        f"Paciente: {_patient_label(name)}. Quiere: hablar con una persona; no aceptó el aviso de "
-        "privacidad, así que el asistente ya no le escribe y no se guardan detalles. Intentado: se "
-        "le dijo que alguien del equipo le responderá por WhatsApp; lo que escriba se borra en 24 h."
+        f"Paciente: {patient_label(name)}. Quiere: no se sabe; tocó «No acepto» en el aviso de "
+        "privacidad. Intentado: se le dijo que el asistente ya no le escribirá y que alguien del "
+        "equipo le responderá por aquí. Contéstale sin pedirle datos de salud por WhatsApp; lo que "
+        "escriba se borra a las 24 h de enviado."
     )

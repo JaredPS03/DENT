@@ -411,6 +411,64 @@ async def test_a_voice_note_nobody_could_hear_goes_to_the_team_before_the_notice
     assert await rows(
         db, "select reason, priority from public.escalations where conversation_id = %s", (conversation_id,)
     ) == [("nota de voz sin transcribir", "normal")]
+    # No notice went out, but what a patient without consent sent is still erased after 24 h.
+    assert await queued_count(db, {"kind": "erase_unconsented", "conversation_id": str(conversation_id)}) == 1
+
+
+async def test_acepto_counts_even_when_the_team_has_the_chat(
+    settings: Settings, db: Database, meta: FakeMeta, phone: str
+) -> None:
+    ctx = world(settings, db, meta)
+    conversation_id = await turn(ctx, db, phone, says(phone, "hola"))
+    async with db.clinic_transaction(CLINIC_A) as conn:
+        await conn.execute(
+            "update public.conversations set status = 'human' where id = %s", (conversation_id,)
+        )
+    sent_before = len(to_patient(meta, phone))
+
+    await turn(ctx, db, phone, taps(phone, ACCEPT, "Acepto"))
+
+    assert len(to_patient(meta, phone)) == sent_before  # a person has the chat: the bot stays quiet
+    assert (
+        await one(
+            db,
+            "select count(*) from public.consents k join public.patients p on p.id = k.patient_id"
+            " where p.phone = %s",
+            (phone,),
+        )
+    )[0] == 1
+
+
+async def test_acepto_in_the_same_burst_as_an_unheard_voice_note_is_kept(
+    settings: Settings, db: Database, meta: FakeMeta, phone: str
+) -> None:
+    ctx = world(settings, db, meta)
+    conversation_id = await turn(ctx, db, phone, says(phone, "hola"))
+    media_id = str(uuid4().int)[:16]
+    meta.media[media_id] = (VOICE_NOTE, "audio/ogg")
+    meta.media_url_override[media_id] = "https://attacker.example/x"
+    audio = meta_payload(
+        "audio",
+        phone_number_id=PHONE_NUMBER_ID_A,
+        user_phone=wa_id(phone),
+        message_id=wamid(),
+        timestamp=int(time.time()),
+    )
+    audio["entry"][0]["changes"][0]["value"]["messages"][0]["audio"]["id"] = media_id
+    await run_events(ctx, await deliver(db, taps(phone, ACCEPT, "Acepto")))
+    await turn(ctx, db, phone, audio)
+
+    assert (
+        await one(
+            db,
+            "select count(*) from public.consents k join public.patients p on p.id = k.patient_id"
+            " where p.phone = %s",
+            (phone,),
+        )
+    )[0] == 1
+    assert await rows(
+        db, "select reason from public.escalations where conversation_id = %s", (conversation_id,)
+    ) == [("nota de voz sin transcribir",)]
 
 
 async def test_without_accepting_the_bot_answers_general_questions_and_asks_again(

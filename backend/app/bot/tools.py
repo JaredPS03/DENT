@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from app.bot.fixed import patient_label
 from app.bot.prompt import clinic_block, opening_hours, spoken_moment
 from app.bot.reply import ConsentRequest, OfferedSlot, Reply, ReplyRejectedError, build_reply
 from app.bot.urgency import normalize
@@ -47,16 +48,26 @@ MAX_SLOTS = 10
 MAX_REASON = 200
 MAX_SUMMARY = 600
 MAX_NAME = 120
-UNCONSENTED_SUMMARY = (
-    "El paciente no ha aceptado el aviso de privacidad: no se guardan detalles y lo que escribió se "
-    "borra en 24 h. Revisa la conversación en la bandeja."
-)
 UNCONSENTED_URGENT_REASON = "posible urgencia (la detectó el asistente)"
-UNCONSENTED_URGENT_SUMMARY = (
-    "Quiere: atención por una posible urgencia. Intentado: se le mandó el mensaje de urgencia. No "
-    "aceptó el aviso de privacidad: no se guardan detalles y lo que escribió se borra en 24 h. "
-    "Revisa la conversación y llámale o escríbele ya."
-)
+
+
+def unconsented_summary(name: str | None) -> str:
+    return (
+        f"Paciente: {patient_label(name)}. Quiere: revisa la conversación; el asistente la pasó al "
+        "equipo y, como no ha aceptado el aviso de privacidad, aquí no van detalles. Intentado: se "
+        "le dijo que el equipo le responderá. Lo que escribió se borra a las 24 h."
+    )
+
+
+def unconsented_urgent_summary(name: str | None) -> str:
+    return (
+        f"Paciente: {patient_label(name)}. Quiere: atención por una posible urgencia que detectó el "
+        "asistente. Intentado: se le mandó el mensaje de urgencia, con el 911 si le cuesta respirar "
+        "o tragar. No aceptó el aviso de privacidad: aquí no van detalles y lo que escribió se borra "
+        "a las 24 h. Revisa la conversación y llámale o escríbele ya."
+    )
+
+
 NO_CONSENT = (
     "El paciente no ha aceptado el aviso de privacidad: no puedes usar esta función. "
     "Responde solo dudas generales del consultorio; el sistema agrega el aviso a tu mensaje."
@@ -155,12 +166,13 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     ),
     _tool(
         "escalar_a_humano",
-        "Pasa la conversación al equipo del consultorio y lo alerta. Obligatoria ante dolor fuerte, "
-        "sangrado, hinchazón o quejas, o si el paciente pide hablar con alguien. Ante una duda "
-        "clínica, primero ofrece una valoración y úsala solo si el paciente prefiere que le conteste "
-        'alguien del consultorio. Con prioridad "urgente" el sistema manda el mensaje de urgencia y '
-        'termina el turno; con "normal", después usa responder para decirle al paciente que el '
-        "equipo le responderá; si el consultorio está cerrado, dile cuándo abre.",
+        'Pasa la conversación al equipo del consultorio y lo alerta. Con prioridad "urgente" ante '
+        "cualquier señal de urgencia de tus reglas (ante la duda, urgente): el sistema manda el "
+        'mensaje de urgencia y termina el turno. Con prioridad "normal" si el paciente pide hablar '
+        "con alguien, está molesto, tiene una queja o necesita algo que no puedes resolver; después "
+        "usa responder para decirle que el equipo le responderá y, si el consultorio está cerrado, "
+        "cuándo abre. Ante una duda clínica sin señales de urgencia, primero ofrece una valoración "
+        "y úsala solo si el paciente prefiere que le conteste alguien del consultorio.",
         {
             "motivo": {**_TEXT, "description": "Por qué se escala, en pocas palabras."},
             "prioridad": {"type": "string", "enum": ["urgente", "normal"]},
@@ -389,10 +401,10 @@ class Tools:
                 # Without consent nothing the AI wrote about the patient is kept (no symptoms), but
                 # the team must know it is an urgency.
                 reason = UNCONSENTED_URGENT_REASON
-                summary = UNCONSENTED_URGENT_SUMMARY
+                summary = unconsented_urgent_summary(self.state.profile.name)
             else:
                 reason = "Pedido por el asistente"
-                summary = UNCONSENTED_SUMMARY
+                summary = unconsented_summary(self.state.profile.name)
             self.state.escalation = await escalate(
                 self._db,
                 clinic_id=self.state.clinic_id,
