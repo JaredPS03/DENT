@@ -27,7 +27,7 @@ MAX_PER_RUN = 200
 
 async def queue_reminders(ctx: WorkerContext, clinic_id: UUID, now: datetime) -> int:
     """Queues the reminders that are due. Returns how many."""
-    queued = too_late = without_template = 0
+    queued = too_late = without_template = declined = 0
     async with ctx.db.clinic_transaction(clinic_id) as conn:
         clinic = await db.reminder_clinic(conn)
         if clinic.phone_number_id is None:
@@ -40,10 +40,21 @@ async def queue_reminders(ctx: WorkerContext, clinic_id: UUID, now: datetime) ->
         tomorrow = now.astimezone(tz).date() + timedelta(days=1)
         for appointment in due:
             local = appointment.starts_at.astimezone(tz)
+            if appointment.declined:
+                # They were told the assistant would not write to them again.
+                declined += await db.insert_reminder(
+                    conn,
+                    reminder_id=uuid4(),
+                    clinic_id=clinic_id,
+                    appointment=appointment,
+                    status="skipped",
+                    skip_reason="declined",
+                )
+                continue
             if local.date() != tomorrow:
                 # The template says "mañana": a reminder that comes too late (the worker was down)
                 # is not sent, and Jared hears of it.
-                await db.insert_reminder(
+                too_late += await db.insert_reminder(
                     conn,
                     reminder_id=uuid4(),
                     clinic_id=clinic_id,
@@ -51,12 +62,16 @@ async def queue_reminders(ctx: WorkerContext, clinic_id: UUID, now: datetime) ->
                     status="skipped",
                     skip_reason="too_late",
                 )
-                too_late += 1
                 continue
             if template is None:
                 # Not approved by Meta, or moved to marketing: tried again on the next run.
                 without_template += 1
                 continue
+            reminder_id = uuid4()
+            if not await db.insert_reminder(
+                conn, reminder_id=reminder_id, clinic_id=clinic_id, appointment=appointment, status="queued"
+            ):
+                continue  # another run claimed it first
             parameters = templates.reminder_parameters(
                 patient_name=appointment.patient_name,
                 service_name=appointment.service_name,
@@ -76,14 +91,7 @@ async def queue_reminders(ctx: WorkerContext, clinic_id: UUID, now: datetime) ->
                 delivery_status="pending",
                 idempotency_key=f"reminder:{appointment.id}:{int(appointment.starts_at.timestamp())}",
             )
-            await db.insert_reminder(
-                conn,
-                reminder_id=uuid4(),
-                clinic_id=clinic_id,
-                appointment=appointment,
-                status="queued",
-                message_id=message.id,
-            )
+            await db.attach_message(conn, reminder_id, message.id)
             await enqueue(conn, ConversationJob(clinic_id=clinic_id, conversation_id=conversation.id))
             queued += 1
     logger.info(
@@ -93,6 +101,7 @@ async def queue_reminders(ctx: WorkerContext, clinic_id: UUID, now: datetime) ->
             "queued": queued,
             "too_late": too_late,
             "without_template": without_template,
+            "declined": declined,
         },
     )
     if too_late or without_template:

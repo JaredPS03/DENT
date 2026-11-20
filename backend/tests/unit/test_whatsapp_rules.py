@@ -196,6 +196,7 @@ def test_a_turn_knows_when_to_come_back() -> None:
         (None, "de nuevo"),
         ("   ", "de nuevo"),
         ("McKenzie", "McKenzie"),
+        ("ana prueba", "Ana"),
     ],
 )
 def test_the_reopen_template_greets_by_first_name(full_name: str | None, greeting: str) -> None:

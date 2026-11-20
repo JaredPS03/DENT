@@ -15,15 +15,18 @@ import pytest
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
+from app.bot.prompt import spoken_day
+from app.bot.reply import CONSENT_DECLINE_ID, consent_accept_id
 from app.bot.transcription import FakeTranscription
 from app.core.config import Settings
 from app.db.connection import Database
+from app.jobs import scheduled
 from app.jobs.context import WorkerContext
 from app.jobs.reminders import queue_reminders
 from app.jobs.scheduled import clean_up, watch
 from app.jobs.scheduler import run_scheduler, tick
 from app.scheduling.axon import AxonAgenda
-from app.scheduling.connector import Actor
+from app.scheduling.connector import Actor, TimeChangedError
 from app.webhooks.whatsapp import _route_account_changes
 from app.whatsapp.payloads import split_payload
 from app.whatsapp.templates import UNKNOWN_NAME_GREETING
@@ -87,11 +90,20 @@ async def db(database_url: str) -> AsyncIterator[Database]:
 
 
 @pytest.fixture(autouse=True)
-def clean_slate() -> Iterator[None]:
-    """Claims and the jobs these tests queue outlive a test: every test starts without them."""
+def clean_slate(phone: str) -> Iterator[None]:
+    """Claims and the jobs these tests queue outlive a test: every test starts without them, and
+    leaves none of its own behind (a queue that grows run after run slows every other test)."""
     _admin("delete from private.claims")
     yield
     _admin("delete from pgmq.q_whatsapp_inbound where message->>'kind' in ('scheduled', 'ops_alert')")
+    _admin(
+        """
+        delete from pgmq.q_whatsapp_inbound q
+        using public.conversations c, public.patients p
+        where p.phone = %s and c.patient_id = p.id and q.message->>'conversation_id' = c.id::text
+        """,
+        (phone,),
+    )
 
 
 @pytest.fixture
@@ -130,14 +142,16 @@ def _admin(sql: str, params: tuple[Any, ...] = ()) -> None:
 
 def _far_ten_am() -> datetime:
     """A weekday at 10:00 in the clinic, months or years ahead, that no other test uses."""
-    day = datetime.now(CLINIC_TZ).date() + timedelta(days=60 + uuid4().int % 5000)
+    day = datetime.now(CLINIC_TZ).date() + timedelta(days=60 + uuid4().int % 20000)
     while day.weekday() >= 5:
         day += timedelta(days=1)
     minutes = 5 * (uuid4().int % 12)
     return datetime(day.year, day.month, day.day, 10, minutes, tzinfo=CLINIC_TZ).astimezone(UTC)
 
 
-async def _book(db: Database, patient_id: UUID, starts_at: datetime | None = None) -> tuple[UUID, datetime]:
+async def _book(
+    db: Database, patient_id: UUID, starts_at: datetime | None = None, service_id: UUID = LIMPIEZA
+) -> tuple[UUID, datetime]:
     """An appointment of the patient, booked well ahead (its time set now)."""
     for attempt in range(10):
         # Taken by an appointment of another test: the next free time.
@@ -150,7 +164,7 @@ async def _book(db: Database, patient_id: UUID, starts_at: datetime | None = Non
                       (clinic_id, patient_id, service_id, provider_id, starts_at, ends_at, status, created_by)
                     values (%s, %s, %s, %s, %s, %s, 'pending', 'bot') returning id
                     """,
-                    (CLINIC_A, patient_id, LIMPIEZA, PROVIDER_A, when, when + timedelta(minutes=45)),
+                    (CLINIC_A, patient_id, service_id, PROVIDER_A, when, when + timedelta(minutes=45)),
                 )
                 row = await cursor.fetchone()
         except psycopg.errors.ExclusionViolation:
@@ -158,6 +172,23 @@ async def _book(db: Database, patient_id: UUID, starts_at: datetime | None = Non
         assert row is not None
         return row[0], when
     raise AssertionError("no free time for the test appointment")
+
+
+async def _move(db: Database, appointment_id: UUID, after: datetime) -> datetime:
+    """Moves the appointment as the team would from the panel, to a free time a week or more
+    after `after` (another test's appointment may hold the first one tried)."""
+    for attempt in range(10):
+        moved_to = after + timedelta(days=7 + 7 * attempt, minutes=5 * (uuid4().int % 60))
+        try:
+            async with db.clinic_transaction(CLINIC_A) as conn:
+                await conn.execute(
+                    "update public.appointments set starts_at = %s, ends_at = %s where id = %s",
+                    (moved_to, moved_to + timedelta(minutes=45), appointment_id),
+                )
+        except psycopg.errors.ExclusionViolation:
+            continue
+        return moved_to
+    raise AssertionError("no free time to move the test appointment to")
 
 
 def _at(moment: datetime) -> Any:
@@ -247,20 +278,18 @@ async def test_a_reminder_goes_out_24_hours_before_and_only_once(
     assert template["name"] == "recordatorio_cita"
     parameters = [p["text"] for p in template["components"][0]["parameters"]]
     assert parameters[0] == UNKNOWN_NAME_GREETING  # the patient never told their name
-    assert parameters[1:] == [
-        "Limpieza",
-        parameters[2],
-        f"10:{local.minute:02d} am",
-        "Clínica Dental Sonrisa",
-    ]
-    assert parameters[2].endswith(f" {local.day} de " + parameters[2].split(" de ")[-1])
+    assert parameters[1:3] == ["limpieza", "Clínica Dental Sonrisa"]
+    assert parameters[3] == f"{spoken_day(local)} a las 10:{local.minute:02d} am"
     [(status, _, message_id)] = await _reminders_of(db, appointment_id)
     assert status == "queued"
     content, kind, category, sender = await one(
         db, "select content, type, billing_category, sender from public.messages where id = %s", (message_id,)
     )
     assert (kind, category, sender) == ("template", "utility", "system")
-    assert content.startswith("Hola de nuevo, este es el recordatorio de la cita de Limpieza mañana ")
+    assert content.startswith(
+        "Hola de nuevo, un recordatorio: la cita de limpieza en Clínica Dental Sonrisa es mañana "
+    )
+    assert content.endswith("¿Confirmamos?")
 
 
 async def test_two_workers_at_once_queue_a_single_reminder(
@@ -278,11 +307,14 @@ async def test_two_workers_at_once_queue_a_single_reminder(
 async def test_an_appointment_booked_with_less_than_24_hours_left_gets_no_reminder(
     ctx: WorkerContext, db: Database, meta: FakeMeta, phone: str
 ) -> None:
-    patient_id = await consenting_patient(db, phone)
-    starts_at = datetime.now(UTC) + timedelta(hours=20, minutes=uuid4().int % 600)
-    appointment_id, _ = await _book(db, patient_id, starts_at.replace(second=0, microsecond=0))
+    """Booked 20 h before it starts: the patient just got the confirmation."""
+    _, appointment_id, starts_at = await _patient_with_appointment(db, phone)
+    _admin(
+        "update public.appointments set time_set_at = %s where id = %s",
+        (starts_at - timedelta(hours=20), appointment_id),
+    )
 
-    assert await queue_reminders(ctx, CLINIC_A, datetime.now(UTC) + timedelta(minutes=1)) == 0
+    assert await queue_reminders(ctx, CLINIC_A, starts_at - timedelta(hours=19)) == 0
     assert await _reminders_of(db, appointment_id) == []
 
 
@@ -310,12 +342,7 @@ async def test_a_reminder_whose_appointment_changed_right_before_the_send_is_voi
     """Changed without the agenda (a direct edit): the check right before Meta still catches it."""
     _, appointment_id, starts_at = await _patient_with_appointment(db, phone)
     assert await queue_reminders(ctx, CLINIC_A, starts_at - timedelta(hours=23)) == 1
-    async with db.clinic_transaction(CLINIC_A) as conn:
-        await conn.execute(
-            "update public.appointments set starts_at = starts_at + interval '1 day',"
-            " ends_at = ends_at + interval '1 day' where id = %s",
-            (appointment_id,),
-        )
+    await _move(db, appointment_id, starts_at)
 
     await take_turns(ctx, await conversation_of(db, phone))
 
@@ -353,12 +380,7 @@ async def test_a_moved_appointment_gets_a_reminder_for_its_new_time(
 ) -> None:
     _, appointment_id, starts_at = await _patient_with_appointment(db, phone)
     assert await queue_reminders(ctx, CLINIC_A, starts_at - timedelta(hours=23)) == 1
-    moved_to = starts_at + timedelta(days=7)
-    async with db.clinic_transaction(CLINIC_A) as conn:
-        await conn.execute(
-            "update public.appointments set starts_at = %s, ends_at = %s where id = %s",
-            (moved_to, moved_to + timedelta(minutes=45), appointment_id),
-        )
+    moved_to = await _move(db, appointment_id, starts_at)
 
     assert await queue_reminders(ctx, CLINIC_A, moved_to - timedelta(hours=23)) == 1
     assert sorted(r[0] for r in await _reminders_of(db, appointment_id)) == ["queued", "queued"]
@@ -418,7 +440,7 @@ async def test_confirmo_confirms_records_where_it_came_from_and_answers(
     assert (await _appointment(db, appointment_id))[0] == "confirmed"
     assert await _events(db, appointment_id) == [("appointment_confirmed", {"source": "reminder"})]
     reply = body_text(to_patient(meta, phone)[-1])
-    assert reply.startswith("¡Gracias! Tu cita de Limpieza queda confirmada para el ")
+    assert reply.startswith("¡Gracias! Tu cita de limpieza queda confirmada para el ")
     assert model.calls == []
 
 
@@ -444,13 +466,13 @@ async def test_cancelar_cancels_and_offers_another_date(
     _, appointment_id, starts_at = await _patient_with_appointment(db, phone)
     _, template_id = await _sent_reminder(ctx, db, phone, appointment_id, starts_at)
 
-    await turn(ctx, db, phone, _tap(phone, "Cancelar", template_id))
+    await turn(ctx, db, phone, _tap(phone, "Cancelar cita", template_id))
 
     assert (await _appointment(db, appointment_id))[0] == "cancelled"
     assert await _events(db, appointment_id) == [("appointment_cancelled", {"source": "reminder"})]
     reply = body_text(to_patient(meta, phone)[-1])
-    assert reply.startswith("Listo, cancelé tu cita de Limpieza del ")
-    assert "Si quieres otra fecha, escríbeme" in reply
+    assert reply.startswith("Listo, cancelé tu cita de limpieza del ")
+    assert "Si fue por error o quieres otra fecha, escríbeme" in reply
 
     # Tapped again later: it says so, and nothing changes.
     await turn(ctx, db, phone, _tap(phone, "Cancelar", template_id))
@@ -458,16 +480,52 @@ async def test_cancelar_cancels_and_offers_another_date(
     assert len(await _events(db, appointment_id)) == 1
 
 
+async def _own_provider(db: Database) -> UUID:
+    """A dentist of clinic A with an empty agenda, open every day: other tests fill the seeded
+    dentist's next days, run after run."""
+    async with db.clinic_transaction(CLINIC_A) as conn:
+        cursor = await conn.execute(
+            "insert into public.providers (clinic_id, name) values (%s, 'Dr. Prueba') returning id",
+            (CLINIC_A,),
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        for weekday in range(1, 8):
+            await conn.execute(
+                """
+                insert into public.schedules (clinic_id, provider_id, weekday, start_time, end_time)
+                values (%s, %s, %s, '09:00', '19:00')
+                """,
+                (CLINIC_A, row[0], weekday),
+            )
+    provider_id: UUID = row[0]
+    return provider_id
+
+
 async def test_cambiar_offers_free_slots_and_the_one_chosen_moves_the_appointment(
     ctx: WorkerContext, db: Database, meta: FakeMeta, model: ScriptedModel, phone: str
 ) -> None:
+    provider_id = await _own_provider(db)
+    try:
+        await _cambiar_moves_the_appointment(ctx, db, meta, model, phone, provider_id)
+    finally:  # off the agenda again, so other tests never see this dentist
+        _admin("update public.providers set active = false where id = %s", (provider_id,))
+
+
+async def _cambiar_moves_the_appointment(
+    ctx: WorkerContext, db: Database, meta: FakeMeta, model: ScriptedModel, phone: str, provider_id: UUID
+) -> None:
     _, appointment_id, starts_at = await _patient_with_appointment(db, phone)
+    async with db.clinic_transaction(CLINIC_A) as conn:
+        await conn.execute(
+            "update public.appointments set provider_id = %s where id = %s", (provider_id, appointment_id)
+        )
     _, template_id = await _sent_reminder(ctx, db, phone, appointment_id, starts_at)
 
     await turn(ctx, db, phone, _tap(phone, "Cambiar", template_id))
 
     offer = to_patient(meta, phone)[-1]
-    assert body_text(offer).startswith("Claro. Estos horarios están libres para tu Limpieza.")
+    assert body_text(offer).startswith("Claro. Estos horarios están libres para tu limpieza.")
     buttons = offer["interactive"]["action"]["buttons"]
     assert 1 <= len(buttons) <= 3
     assert (await _appointment(db, appointment_id)) == ("pending", starts_at)  # untouched until chosen
@@ -479,7 +537,7 @@ async def test_cambiar_offers_free_slots_and_the_one_chosen_moves_the_appointmen
     assert status == "pending"
     assert moved_to != starts_at
     assert await _events(db, appointment_id) == [("appointment_rescheduled", {"source": "reminder"})]
-    assert body_text(to_patient(meta, phone)[-1]).startswith("Listo, tu cita de Limpieza quedó para ")
+    assert body_text(to_patient(meta, phone)[-1]).startswith("Listo, tu cita de limpieza quedó para ")
     assert model.calls == []
 
 
@@ -488,12 +546,7 @@ async def test_a_tap_on_an_old_reminder_says_what_changed(
 ) -> None:
     _, appointment_id, starts_at = await _patient_with_appointment(db, phone)
     _, template_id = await _sent_reminder(ctx, db, phone, appointment_id, starts_at)
-    moved_to = starts_at + timedelta(days=7)
-    async with db.clinic_transaction(CLINIC_A) as conn:  # the team moved it from the panel
-        await conn.execute(
-            "update public.appointments set starts_at = %s, ends_at = %s where id = %s",
-            (moved_to, moved_to + timedelta(minutes=45), appointment_id),
-        )
+    moved_to = await _move(db, appointment_id, starts_at)
 
     await turn(ctx, db, phone, _tap(phone, "Confirmo", template_id))
 
@@ -523,10 +576,40 @@ async def test_a_tap_whose_template_id_is_unknown_finds_the_latest_reminder(
     """The template's send outcome was lost, so its Meta id is unknown here."""
     _, appointment_id, starts_at = await _patient_with_appointment(db, phone)
     await _sent_reminder(ctx, db, phone, appointment_id, starts_at)
+    [(_, _, message_id)] = await _reminders_of(db, appointment_id)
+    async with db.clinic_transaction(CLINIC_A) as conn:
+        await conn.execute(
+            "update public.messages set meta_message_id = null, delivery_status = 'pending' where id = %s",
+            (message_id,),
+        )
 
     await turn(ctx, db, phone, _tap(phone, "confirmo", "wamid.NO.SE.CONOCE"))
 
     assert (await _appointment(db, appointment_id))[0] == "confirmed"
+
+
+async def test_a_tap_answering_another_known_message_never_falls_back_to_a_reminder(
+    ctx: WorkerContext, db: Database, phone: str
+) -> None:
+    """revisor-seguridad: a "Cancelar" on another template (sent by the clinic from its own tools)
+    must not cancel the appointment of the last reminder."""
+    _, appointment_id, starts_at = await _patient_with_appointment(db, phone)
+    conversation_id, _ = await _sent_reminder(ctx, db, phone, appointment_id, starts_at)
+    other_template = wamid()
+    async with db.clinic_transaction(CLINIC_A) as conn:
+        await conn.execute(
+            """
+            insert into public.messages (clinic_id, conversation_id, direction, sender, type, content,
+                                         delivery_status, meta_message_id)
+            values (%s, %s, 'outbound', 'human', 'template', 'Otra plantilla', 'sent', %s)
+            """,
+            (CLINIC_A, conversation_id, other_template),
+        )
+
+    await turn(ctx, db, phone, _tap(phone, "Cancelar", other_template))
+
+    assert (await _appointment(db, appointment_id))[0] == "pending"
+    assert await _events(db, appointment_id) == []
 
 
 async def test_a_tap_never_reaches_the_appointment_of_another_patient(
@@ -578,6 +661,14 @@ async def test_an_urgency_nobody_attends_is_alerted_again_once(
 
     alerts = [m for m in meta.sent if m.get("to") in {p.removeprefix("+") for p in TEAM_PHONES}]
     assert len(alerts) == 4  # the first alert and the second one, to each of the two
+    priorities = [a["template"]["components"][0]["parameters"][2]["text"] for a in alerts]
+    # The second one says so (revisor-clinico): the team does not read it as a copy.
+    assert priorities == [
+        "urgente",
+        "urgente",
+        "urgente, sigue sin respuesta",
+        "urgente, sigue sin respuesta",
+    ]
     assert await rows(
         db,
         "select round, count(*) from public.team_alerts"
@@ -638,7 +729,7 @@ async def test_a_message_without_an_answer_after_5_minutes_reaches_jared_once_an
     [alert] = [m for m in meta.sent if m.get("to") == OPS_PHONE.removeprefix("+")]
     assert alert["template"]["name"] == "alerta_axon"
     parameters = [p["text"] for p in alert["template"]["components"][0]["parameters"]]
-    assert parameters[:2] == ["mensajes de pacientes sin respuesta", "Clínica Dental Sonrisa"]
+    assert parameters[:2] == ["mensajes de pacientes sin respuesta tras 5 minutos", "Clínica Dental Sonrisa"]
     assert parameters[2].isdigit()  # how many: never which patient
 
 
@@ -901,3 +992,144 @@ async def test_past_the_clinic_daily_cap_a_voice_note_goes_to_the_team_unheard(
     assert await rows(
         db, "select reason from public.escalations where conversation_id = %s", (conversation_id,)
     ) == [("nota de voz sin transcribir",)]
+
+
+# After the reviews -------------------------------------------------------------------------------
+
+
+async def test_who_tapped_no_acepto_gets_no_reminder_until_accepting(
+    ctx: WorkerContext, db: Database, phone: str
+) -> None:
+    """revisor-clinico: they were told the assistant would not write again, and the notice names
+    the reminders among its purposes."""
+    await turn(ctx, db, phone, says(phone, "hola"))
+    await turn(ctx, db, phone, taps(phone, CONSENT_DECLINE_ID, "No acepto"))
+    patient_id, declined_at = await one(
+        db, "select id, privacy_declined_at from public.patients where phone = %s", (phone,)
+    )
+    assert declined_at is not None
+    appointment_id, starts_at = await _book(db, patient_id)
+
+    assert await queue_reminders(ctx, CLINIC_A, starts_at - timedelta(hours=23)) == 0
+    assert await _reminders_of(db, appointment_id) == [("skipped", "declined", None)]
+
+    await turn(ctx, db, phone, taps(phone, consent_accept_id("2026-10"), "Acepto"))
+    assert (await one(db, "select privacy_declined_at from public.patients where id = %s", (patient_id,)))[
+        0
+    ] is None
+    _, later = await _book(db, patient_id)
+    assert await queue_reminders(ctx, CLINIC_A, later - timedelta(hours=23)) == 1
+
+
+async def test_a_tap_while_the_appointment_is_under_way_never_says_it_passed(
+    ctx: WorkerContext, db: Database, meta: FakeMeta, phone: str
+) -> None:
+    """revisor-clinico: "ya pasó" could make a patient on their way turn back."""
+    _, appointment_id, starts_at = await _patient_with_appointment(db, phone)
+    _, template_id = await _sent_reminder(ctx, db, phone, appointment_id, starts_at)
+    now = datetime.now(UTC).replace(second=0, microsecond=0)
+    # This test's own appointment from an earlier run that stopped halfway holds the provider now.
+    _admin(
+        """
+        update public.appointments a set status = 'cancelled', cancelled_at = now()
+        from public.patients p
+        where p.id = a.patient_id and p.name is null and a.provider_id = %s
+          and a.status in ('pending', 'confirmed') and a.starts_at < now() and a.ends_at > now()
+        """,
+        (PROVIDER_A,),
+    )
+    async with db.clinic_transaction(CLINIC_A) as conn:
+        await conn.execute(
+            "update public.appointments set starts_at = %s, ends_at = %s where id = %s",
+            (now - timedelta(minutes=10), now + timedelta(minutes=35), appointment_id),
+        )
+    try:
+        await turn(ctx, db, phone, _tap(phone, "Confirmo", template_id))
+
+        reply = body_text(to_patient(meta, phone)[-1])
+        assert reply.startswith("Tu cita era hoy a ")
+        assert "Si vas en camino, escríbeme" in reply
+        assert (await _appointment(db, appointment_id))[0] == "pending"
+    finally:
+        _admin(
+            "update public.appointments set status = 'cancelled', cancelled_at = now() where id = %s",
+            (appointment_id,),
+        )
+
+
+async def test_confirming_or_cancelling_checks_the_time_under_the_lock(db: Database, phone: str) -> None:
+    """revisor-seguridad: the team may move the appointment between the lookup and the change."""
+    patient_id = await consenting_patient(db, phone)
+    appointment_id, starts_at = await _book(db, patient_id)
+    agenda = AxonAgenda(db)
+
+    for change in (agenda.confirm, agenda.cancel):
+        with pytest.raises(TimeChangedError) as moved:
+            await change(
+                CLINIC_A, appointment_id, actor=BOT, expected_starts_at=starts_at - timedelta(days=1)
+            )
+        assert moved.value.starts_at == starts_at
+
+    assert (await _appointment(db, appointment_id))[0] == "pending"
+    assert await _events(db, appointment_id) == []
+
+
+async def test_cambiar_on_a_service_no_longer_offered_still_answers(
+    ctx: WorkerContext, db: Database, meta: FakeMeta, phone: str
+) -> None:
+    """revisor-seguridad: the turn used to fail on every attempt and the patient got no answer."""
+    async with db.clinic_transaction(CLINIC_A) as conn:
+        cursor = await conn.execute(
+            "insert into public.services (clinic_id, name, duration_minutes)"
+            " values (%s, %s, 45) returning id",
+            (CLINIC_A, f"Prueba {uuid4().hex[:6]}"),
+        )
+        row = await cursor.fetchone()
+    assert row is not None
+    patient_id = await consenting_patient(db, phone)
+    appointment_id, starts_at = await _book(db, patient_id, service_id=row[0])
+    _, template_id = await _sent_reminder(ctx, db, phone, appointment_id, starts_at)
+    async with db.clinic_transaction(CLINIC_A) as conn:
+        await conn.execute("update public.services set active = false where id = %s", (row[0],))
+
+    await turn(ctx, db, phone, _tap(phone, "Cambiar horario", template_id))
+
+    assert body_text(to_patient(meta, phone)[-1]).startswith("No encontré horarios libres")
+
+
+async def test_orphan_files_are_found_wherever_they_are_in_the_listing(
+    settings: Settings, db: Database, meta: FakeMeta, phone: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """revisor-seguridad: the cap counts deleted files, not listed ones."""
+    monkeypatch.setattr(scheduled, "PAGE_SIZE", 2)
+    monkeypatch.setattr(scheduled, "MAX_FILES_PER_RUN", 1)
+    store = MemoryStore()
+    ctx = make_context(settings, db, meta, store=store)
+    patient_id = await consenting_patient(db, phone)
+    used = [f"{CLINIC_A}/{uuid4()}/{uuid4()}.ogg" for _ in range(5)]
+    orphan = f"{CLINIC_A}/ffffffff-ffff-4fff-bfff-ffffffffffff/{uuid4()}.ogg"  # last in key order
+    for path in [*used, orphan]:
+        await store.put(CLINIC_A, path, b"audio", "audio/ogg")
+        store.stored_at[path] -= timedelta(days=2)
+    async with db.clinic_transaction(CLINIC_A) as conn:
+        cursor = await conn.execute(
+            "insert into public.conversations (clinic_id, patient_id) values (%s, %s) returning id",
+            (CLINIC_A, patient_id),
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        for path in used:
+            await conn.execute(
+                """
+                insert into public.messages (clinic_id, conversation_id, direction, sender, type, media_path,
+                                             meta_message_id, handled_at)
+                values (%s, %s, 'inbound', 'patient', 'audio', %s, %s, now())
+                """,
+                (CLINIC_A, row[0], path, wamid()),
+            )
+    local_today = datetime.now(CLINIC_TZ).date()
+    at_three = datetime(local_today.year, local_today.month, local_today.day, 3, 30, tzinfo=CLINIC_TZ)
+
+    await clean_up(ctx, CLINIC_A, at_three.astimezone(UTC))
+
+    assert set(store.files) == set(used)

@@ -234,7 +234,7 @@ Toda tabla lleva `clinic_id` y una regla de seguridad por fila: un consultorio n
 | `services` | Catálogo | nombre, duración en minutos, precio de referencia, requiere anticipo, monto del anticipo | 1 |
 | `schedules` | Horario semanal | día, hora de inicio y fin, descansos, margen entre citas | 1 |
 | `schedule_exceptions` | Vacaciones y bloqueos | fecha y hora de inicio y fin, motivo | 1 |
-| `patients` | Pacientes | nombre, teléfono o id de usuario de WhatsApp (BSUID, para quien oculta su número con un nombre de usuario), última visita, permiso de marketing, origen (bot, importado, Dentalink), id externo | 1 |
+| `patients` | Pacientes | nombre, teléfono o id de usuario de WhatsApp (BSUID, para quien oculta su número con un nombre de usuario), última visita, permiso de marketing, cuándo tocó "No acepto" en el aviso (no recibe recordatorios automáticos hasta aceptar), origen (bot, importado, Dentalink), id externo | 1 |
 | `consents` | Prueba del consentimiento | paciente, versión del aviso, fecha y hora, mensaje en que aceptó | 1 |
 | `appointments` | Citas | paciente, servicio, `provider_id`, inicio y fin, estado (pendiente, confirmada, asistió, faltó, cancelada), creada por (bot, humano), id externo si viene de Google o Dentalink; restricción de exclusión contra traslapes por `provider_id` | 1 |
 | `conversations` | Un chat por paciente | estado (bot, humano, cerrada), última actividad, ventana de 24 h abierta hasta, bot en pausa hasta (cuando el consultorio contesta desde su app) | 1 |
@@ -242,7 +242,7 @@ Toda tabla lleva `clinic_id` y una regla de seguridad por fila: un consultorio n
 | `escalations` | Pases a humano | motivo, prioridad (urgente, normal), resumen, quién lo atendió | 1 |
 | `events` | Hechos para el tablero | tipo (agendada fuera de horario, confirmada, reagendada, reactivada…), cita, fecha, valor en pesos cuando el paciente asiste | 1 |
 | `templates` | Plantillas de Meta | nombre, categoría (utilidad, marketing), idioma, estado de aprobación y su motivo, sincronizados con los avisos de Meta | 1 |
-| `appointment_reminders` | Recordatorio de cada cita | cita, hora que anuncia (una cita movida recibe el suyo para la hora nueva), estado (en cola, anulado, omitido), mensaje | 1 |
+| `appointment_reminders` | Recordatorio de cada cita | cita, hora que anuncia (una cita movida recibe el suyo para la hora nueva), estado (en cola, anulado, omitido y por qué: ya era tarde o el paciente no aceptó el aviso), mensaje | 1 |
 | `audit_log` | Bitácora | quién (usuario o sistema), acción, tabla e id, cambios, fecha | 1 |
 | `webhook_events` | Avisos crudos de Meta, para reprocesar si algo falla | id de Meta, tipo, contenido, recibido, procesado; el contenido se borra a los 7 días de procesado | 1 |
 | `message_usage` | Medidor del tope | mes, mensajes por categoría, costo estimado | 2 |
@@ -304,12 +304,12 @@ Todo mensaje que inicia el consultorio fuera de la ventana de 24 h necesita una 
 
 | Plantilla | Categoría | Texto propuesto | Botones | Fase |
 | --- | --- | --- | --- | --- |
-| `recordatorio_cita` | Utilidad | Hola {{1}}, este es el recordatorio de la cita de {{2}} mañana {{3}} a las {{4}} en {{5}}. (Un solo texto para tú y usted; decisión 008.) | Confirmo · Cambiar · Cancelar | 1 |
+| `recordatorio_cita` | Utilidad | Hola {{1}}, un recordatorio: la cita de {{2}} en {{3}} es mañana {{4}}. ¿Confirmamos? (Un solo texto para tú y usted; {{4}} lleva el día y la hora: "miércoles 18 de noviembre a la 1:30 pm"; decisión 008.) | Confirmo · Cambiar horario · Cancelar cita | 1 |
 | `cita_confirmada` | Utilidad | Tu cita de {{1}} quedó el {{2}} a las {{3}}. Dirección: {{4}}. | Ver ubicación (enlace) | 1 |
 | `cita_movida` | Utilidad | El consultorio movió tu cita de {{1}} al {{2}} a las {{3}}. ¿Te queda bien? | Sí · Elegir otro horario | 1 |
 | `retomar_conversacion` | Utilidad | Hola {{1}}, te escribimos de {{2}} sobre tu mensaje. ¿Seguimos? | Sí, seguimos | 1 |
 | `alerta_equipo` (de Axon al equipo del consultorio) | Utilidad | Hola {{1}}, un paciente de {{2}} necesita al equipo (prioridad {{3}}). Ábrelo desde el botón. | Abrir conversación (enlace) | 1 |
-| `alerta_axon` (de Axon a ti, alertas de operación) | Utilidad | Alerta de Axon: {{1}} en {{2}} ({{3}}). Revisa Sentry para el detalle. | Ninguno | 1 |
+| `alerta_axon` (de Axon a ti, alertas de operación) | Utilidad | Alerta de Axon: {{1}} en {{2}}. Casos: {{3}}. Revisa Sentry para el detalle. | Ninguno | 1 |
 | `resumen_diario` (al dentista) | Utilidad | Mañana tienes {{1}} citas, {{2}} confirmadas. {{3}} pacientes pidieron hablar contigo. | Ver agenda (enlace) | 2 |
 | `reporte_mensual` (de Axon al dentista) | Utilidad | En {{1}}, Axon te recuperó {{2}} citas, unos {{3}} pesos. | Ver detalle (enlace) | 2 |
 | `recall_limpieza` | Marketing | Hola {{1}}, ya pasaron {{2}} meses de tu última limpieza en {{3}}. ¿Te agendo? | Agendar · Más adelante · No recibir más | 3 |

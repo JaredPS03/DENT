@@ -1,6 +1,6 @@
 # Prompt del asistente de WhatsApp
 
-Versión 1.0. Es el prompt de sistema que usa el bot (`claude-haiku-5-5`) en cada turno. El código lo copia a `backend/app/bot/prompts/` con su número de versión y rellena las variables `{{...}}` con la configuración del consultorio y el contexto del paciente. Cambiarlo exige correr las evaluaciones y pasar la revisión de `revisor-clinico`.
+Versión 1.1. Es el prompt de sistema que usa el bot (`claude-haiku-5-5`) en cada turno. El código lo copia a `backend/app/bot/prompts/` con su número de versión y rellena las variables `{{...}}` con la configuración del consultorio y el contexto del paciente. Cambiarlo exige correr las evaluaciones y pasar la revisión de `revisor-clinico`. La 1.1 solo cambia el ejemplo de cita agendada: ya no promete un recordatorio, porque una cita para el día siguiente no lo recibe (hito 1D, decisión 008).
 
 ## Prompt de sistema
 
@@ -52,7 +52,7 @@ responder({"texto": "¡Hola! Soy el asistente virtual de {{consultorio.nombre}}.
 <ejemplo>
 <mensaje_paciente>Jue 4:00 pm</mensaje_paciente> (Tocó el horario «Jue 4:00 pm» (es el jueves 19 de noviembre, 4:00 pm) de Limpieza; inicio exacto: 2026-11-19T16:00:00-06:00)
 agendar_cita({"servicio": "Limpieza", "inicio": "2026-11-19T16:00:00-06:00"}) devuelve {"cita": {"servicio": "Limpieza", "fecha": "jueves 19 de noviembre, 4:00 pm"}}
-responder({"texto": "¡Listo! Tu limpieza quedó el jueves 19 de noviembre a las 4:00 pm. Te mandaremos un recordatorio antes de tu cita.", "botones": [], "horarios": [], "lista": []})
+responder({"texto": "¡Listo! Tu limpieza quedó el jueves 19 de noviembre a las 4:00 pm. Te esperamos.", "botones": [], "horarios": [], "lista": []})
 </ejemplo>
 
 <ejemplo>

@@ -3,7 +3,7 @@
 begin;
 \ir 00_helpers.psql
 
-select plan(23);
+select plan(24);
 
 create function pg_temp.as_backend(p_sql text, p_clinic uuid default null) returns text language sql as $$
   select (pg_temp.run_as('axon_app', p_sql, coalesce(p_clinic, pg_temp.clinic_a()))).state
@@ -47,6 +47,12 @@ $$), '23514', 'un recordatorio que no salió dice por qué');
 select is(pg_temp.backend_value($$
   select count(*) from public.appointment_reminders where id = 'ad100000-0000-4000-8000-000000000001'
 $$, pg_temp.clinic_b()), 0::bigint, 'el consultorio B no ve los recordatorios de A');
+
+select is(pg_temp.as_backend($$
+  insert into public.appointment_reminders (clinic_id, appointment_id, starts_at, status, skip_reason)
+  values ('a0000000-0000-4000-8000-000000000001', 'aa000000-0000-4000-8000-000000000001',
+          now() + interval '9 days', 'skipped', 'declined')
+$$), null, 'quien tocó "No acepto" queda sin recordatorio, con su motivo');
 
 -- When the appointment got its time ------------------------------------------------------------
 

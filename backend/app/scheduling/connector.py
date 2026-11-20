@@ -70,6 +70,14 @@ class InvalidChangeError(AgendaError):
     """The change is not allowed: an inactive service, or the appointment's current state."""
 
 
+class TimeChangedError(InvalidChangeError):
+    """The appointment is no longer at the time the caller saw (someone moved it meanwhile)."""
+
+    def __init__(self, starts_at: datetime) -> None:
+        super().__init__("Esa cita cambió de hora.")
+        self.starts_at = starts_at
+
+
 class AgendaConnector(Protocol):
     async def find_slots(  # noqa: PLR0913 - window, service and options of one search
         self,
@@ -97,11 +105,19 @@ class AgendaConnector(Protocol):
         source: str | None = None,
     ) -> Appointment: ...
 
+    # `expected_starts_at`: the time the caller saw. If the appointment moved meanwhile, nothing
+    # changes and TimeChangedError says its new time.
     async def confirm(
-        self, clinic_id: UUID, appointment_id: UUID, *, actor: Actor, source: str | None = None
+        self,
+        clinic_id: UUID,
+        appointment_id: UUID,
+        *,
+        actor: Actor,
+        source: str | None = None,
+        expected_starts_at: datetime | None = None,
     ) -> Appointment: ...
 
-    async def cancel(
+    async def cancel(  # noqa: PLR0913 - the change, where it came from and what the caller saw
         self,
         clinic_id: UUID,
         appointment_id: UUID,
@@ -109,4 +125,5 @@ class AgendaConnector(Protocol):
         actor: Actor,
         reason: str | None = None,
         source: str | None = None,
+        expected_starts_at: datetime | None = None,
     ) -> Appointment: ...

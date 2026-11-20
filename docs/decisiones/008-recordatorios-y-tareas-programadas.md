@@ -42,7 +42,7 @@ Jared aprobó el plan con estas ocho decisiones:
 **Los botones** (`app/bot/reminder_taps.py`) son código, sin IA. Corren antes que la IA y que la puerta de consentimiento, porque solo tocan la cita:
 - **Ligar el toque a su recordatorio:** Meta devuelve el toque de una respuesta rápida de plantilla con el texto del botón, no con un id propio. Así lo documenta su referencia del webhook `messages/button`, y el ejemplo trae el mismo texto en `payload` y `text`. Por eso se liga por `context.id`, el wamid de la plantilla que el paciente contesta, y solo dentro de su propia conversación. Si ese id no se conoce (el envío quedó incierto), toma el último recordatorio de esa conversación de las últimas 48 h.
 - **Confirmo y Cancelar:** cambian la cita y registran el evento con `{"source": "reminder"}` para el reporte mensual. Un segundo toque no cambia nada ni registra otro evento.
-- **Cambiar:** ofrece hasta 3 horarios libres del mismo servicio, el primero de cada día en los próximos 7 días, como botones `mover:<recordatorio>:<horario>`. La cita no se toca hasta que el paciente elige. Al elegir, el código comprueba que ese horario se mostró en esa conversación, en un mensaje que llegó, y mueve la cita.
+- **Cambiar horario:** ofrece hasta 3 horarios libres del mismo servicio y el mismo dentista, uno por día en los próximos 7 días y el más cercano a la hora de la cita, como botones `mover:<recordatorio>:<horario>`. La cita no se toca hasta que el paciente elige. Al elegir, el código comprueba que ese horario se mostró en esa conversación, en un mensaje que llegó, y mueve la cita.
 - **Recordatorio viejo:** si la cita ya se canceló, ya pasó o cambió de hora, el mensaje lo dice y no actúa.
 - **Ráfaga con más mensajes:** si además del toque el paciente escribió algo, el toque se aplica y el resto lo contesta la IA como siempre.
 
@@ -78,16 +78,47 @@ Jared aprobó el plan con estas ocho decisiones:
 
 **El tope diario de transcripciones por consultorio** (`TRANSCRIPTION_DAILY_CAP_PER_CLINIC`, 300 por defecto) se suma al de cada conversación. Pasándolo, la nota de voz va al equipo sin transcribir, como una que no se pudo escuchar.
 
-**Base de datos** (migración `reminders_and_scheduled_jobs`):
+**Base de datos** (migraciones `reminders_and_scheduled_jobs` y `reminders_review_fixes`):
 - `appointment_reminders`, con RLS solo para el backend;
 - `appointments.time_set_at` y su trigger;
 - `messages.context_meta_message_id`;
 - `clinics.media_retention_days` y `urgent_realert_minutes`;
 - `escalations.realerted_at` y `team_alerts.round`;
 - `templates.status_reason`;
+- `patients.privacy_declined_at` y el motivo `declined`;
 - el tipo `account` en `webhook_events`;
 - `private.claims` con `private.claim()` y `private.clinics_for_waba()`;
 - permiso de borrar horarios ofrecidos.
+
+## Ajustes tras las revisiones
+
+**`revisor-clinico`** (1 alto, 9 medios y 5 bajos). Corregidos:
+- **Alto: quien tocó "No acepto" seguía recibiendo recordatorios,** aunque se le dijo que el asistente ya no le escribiría y el aviso nombra los recordatorios entre sus finalidades. Ahora el rechazo se guarda (`patients.privacy_declined_at`) y el recordatorio se omite (`declined`) hasta que acepte, lo que borra la marca.
+- **Texto de `recordatorio_cita`:** "Hola {{1}}, un recordatorio: la cita de {{2}} en {{3}} es mañana {{4}}. ¿Confirmamos?". {{4}} lleva el día y la hora, con "a la 1:30 pm" en singular. Ya no termina en una variable, pide la confirmación y el servicio va en minúscula ("la cita de limpieza").
+- **Botones "Confirmo · Cambiar horario · Cancelar cita":** "Cambiar" y "Cancelar" se confundían de un vistazo. El código también lee las etiquetas cortas de la especificación. La respuesta a Cancelar dice "Si fue por error o quieres otra fecha…".
+- **Llegada tarde:** un toque mientras la cita está en curso ya no dice "Esa cita ya pasó", que podía hacer que el paciente se diera la vuelta; dice "Tu cita era hoy a las… Si vas en camino, escríbeme…".
+- **El segundo aviso de una urgencia** dice "prioridad urgente, sigue sin respuesta", para que el equipo no lo lea como una copia.
+- **El prompt pasa a la versión 1.1:** su ejemplo de cita agendada prometía un recordatorio, y una cita para el día siguiente no lo recibe. Es el único cambio.
+- **Cambiar horario** ofrece horarios del mismo dentista, cerca de la hora de la cita.
+- **`alerta_axon`:** "Alerta de Axon: {{1}} en {{2}}. Casos: {{3}}. Revisa Sentry para el detalle.", con frases más claras.
+- Tres textos fijos más claros: no se pudo mover, horario ocupado y cita ya cancelada. Un nombre escrito en minúsculas se saluda con mayúscula.
+
+Quedan como preguntas para Jared y el abogado:
+- quitar el servicio de la plantilla (es un dato de salud y se ve en la pantalla bloqueada);
+- el permiso del paciente que agenda el consultorio sin que haya escrito nunca, con una casilla en el panel (1E);
+- que un "sí" escrito al recordatorio cuente como Confirmo.
+
+Se quedan como Jared decidió: no contestar con el chat tomado o el bot apagado. El panel (1E) mostrará el cambio de la cita junto al toque.
+
+**`revisor-seguridad`** (6 medios, ningún alto ni crítico, sin fugas entre consultorios). Corregidos con su prueba:
+- **Archivos huérfanos:** la limpieza recorre el listado de Storage por páginas y el tope cuenta archivos borrados, no listados. Antes, un consultorio con más de 1000 archivos en uso nunca llegaba a sus huérfanos.
+- **Avisos de cuenta repetidos:** la clave incluye `entry[].time`. "Aprobada" de nuevo, después de una pausa, ya no se descarta como duplicado (dejaba la plantilla pausada para siempre).
+- **El respaldo de un toque** solo toma un recordatorio cuyo id de Meta nunca se supo. Si el toque contesta otro mensaje conocido, no hace nada: un "Cancelar" en otra plantilla ya no cancela la cita del último recordatorio.
+- **Cambiar horario sobre un servicio desactivado** contesta que no hay horarios, en vez de fallar en cada intento y dejar al paciente sin respuesta.
+- **Confirmar y cancelar** revisan la hora dentro de la misma transacción del cambio (`expected_starts_at`). Si el equipo movió la cita en medio, no cambia nada y el paciente recibe la hora nueva.
+- **Dos workers con la misma cita:** el recordatorio se reclama primero ("si ya existe, no hagas nada") y solo quien lo reclama encola la plantilla. Antes, el segundo chocaba con la llave única y se reintentaba.
+
+Queda como pregunta para Jared: limpiar también los consultorios pausados. Hoy la limpieza solo corre en los activos, y uno pausado sigue recibiendo avisos de Meta. Hace falta una función más que devuelva ids, y eso cambia una regla de `base-de-datos.md`.
 
 ## Alternativas
 
@@ -101,7 +132,7 @@ Jared aprobó el plan con estas ocho decisiones:
 
 - **Variables nuevas:** `AXON_WABA_ID`, `OPS_ALERT_PHONE` y `TRANSCRIPTION_DAILY_CAP_PER_CLINIC`.
 - **Para Jared, antes de producción:**
-  - dar de alta en Meta `recordatorio_cita` con el texto nuevo y tres respuestas rápidas con estas etiquetas exactas: Confirmo, Cambiar y Cancelar;
+  - dar de alta en Meta `recordatorio_cita` con el texto nuevo y tres respuestas rápidas con estas etiquetas exactas: Confirmo, Cambiar horario y Cancelar cita;
   - dar de alta `alerta_axon` en el número de Axon;
   - suscribir la app a `message_template_status_update`, `template_category_update`, `phone_number_quality_update` y `account_update`;
   - en Sentry, una regla de correo para `ops.alert` y para el monitor `axon-worker`.

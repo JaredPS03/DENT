@@ -152,11 +152,14 @@ def split_payload(raw: dict[str, Any]) -> tuple[list[WebhookItem], list[AccountC
             raw_value: dict[str, Any] = raw["entry"][entry_index]["changes"][change_index]["value"]
             if change.value.metadata is None:
                 if change.field in ACCOUNT_FIELDS:
+                    # The value carries no date: two equal notices (approved, paused, approved
+                    # again) differ only in entry[].time, so it goes in the key.
+                    moment = _entry_time(raw, entry_index)
                     account.append(
                         AccountChange(
                             entry_id=entry.id,
                             field=change.field,
-                            dedup_key=f"account:{change.field}:{_digest(raw_value)}",
+                            dedup_key=f"account:{change.field}:{moment}:{_digest(raw_value)}",
                             payload=raw_value,
                         )
                     )
@@ -203,6 +206,11 @@ def split_payload(raw: dict[str, Any]) -> tuple[list[WebhookItem], list[AccountC
                 )
 
     return items, account
+
+
+def _entry_time(raw: dict[str, Any], entry_index: int) -> str:
+    moment = raw["entry"][entry_index].get("time")
+    return str(moment) if isinstance(moment, int | str) and len(str(moment)) <= 20 else "-"
 
 
 def _digest(value: dict[str, Any]) -> str:

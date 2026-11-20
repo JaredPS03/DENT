@@ -36,6 +36,8 @@ class DueAppointment:
     patient_name: str | None
     service_name: str
     starts_at: datetime
+    # The patient tapped "No acepto": they get no automatic reminder.
+    declined: bool = False
 
 
 async def due_appointments(
@@ -46,7 +48,7 @@ async def due_appointments(
     the patient just got the confirmation. Locked, so a second run waits instead of repeating."""
     cursor = await conn.execute(
         """
-        select a.id, a.patient_id, p.name, s.name, a.starts_at
+        select a.id, a.patient_id, p.name, s.name, a.starts_at, p.privacy_declined_at is not null
         from public.appointments a
         join public.patients p on p.id = a.patient_id
         join public.services s on s.id = a.service_id
@@ -74,15 +76,26 @@ async def insert_reminder(  # noqa: PLR0913 - one value per column
     appointment: DueAppointment,
     status: ReminderStatus,
     skip_reason: str | None = None,
-    message_id: UUID | None = None,
-) -> None:
-    await conn.execute(
+) -> bool:
+    """Claims the reminder of the appointment at its current time. False if another run already
+    has it (two workers that read the same due appointment): only the one that claims it queues the
+    template."""
+    cursor = await conn.execute(
         """
         insert into public.appointment_reminders
-          (id, clinic_id, appointment_id, starts_at, status, skip_reason, message_id)
-        values (%s, %s, %s, %s, %s, %s, %s)
+          (id, clinic_id, appointment_id, starts_at, status, skip_reason)
+        values (%s, %s, %s, %s, %s, %s)
+        on conflict (clinic_id, appointment_id, starts_at) do nothing
+        returning id
         """,
-        (reminder_id, clinic_id, appointment.id, appointment.starts_at, status, skip_reason, message_id),
+        (reminder_id, clinic_id, appointment.id, appointment.starts_at, status, skip_reason),
+    )
+    return await cursor.fetchone() is not None
+
+
+async def attach_message(conn: AsyncConnection, reminder_id: UUID, message_id: UUID) -> None:
+    await conn.execute(
+        "update public.appointment_reminders set message_id = %s where id = %s", (message_id, reminder_id)
     )
 
 
@@ -115,10 +128,12 @@ class TappedReminder:
     service_name: str
     status: str
     starts_at: datetime
+    ends_at: datetime
+    provider_id: UUID
 
 
 _TAPPED_COLUMNS = """
-    r.id, r.starts_at, a.id, a.service_id, s.name, a.status, a.starts_at
+    r.id, r.starts_at, a.id, a.service_id, s.name, a.status, a.starts_at, a.ends_at, a.provider_id
 """
 
 
@@ -126,8 +141,9 @@ async def reminder_answered(
     conn: AsyncConnection, conversation_id: UUID, context_meta_message_id: str | None, since: datetime
 ) -> TappedReminder | None:
     """The reminder a tap on a template button answers: the one whose message has the wamid the tap
-    points to. If Meta's id of that message is unknown (its send outcome was lost), the latest
-    reminder sent in this conversation since `since`. Never one of another conversation."""
+    points to. Only if the tap answers no message Axon knows, the latest reminder of this
+    conversation since `since` whose Meta id was never learned (its send outcome was lost). Never
+    one of another conversation, and never when the tap answers another known message."""
     if context_meta_message_id is not None:
         cursor = await conn.execute(
             f"""
@@ -143,6 +159,12 @@ async def reminder_answered(
         row = await cursor.fetchone()
         if row is not None:
             return TappedReminder(*row)
+        cursor = await conn.execute(
+            "select 1 from public.messages where meta_message_id = %s and conversation_id = %s",
+            (context_meta_message_id, conversation_id),
+        )
+        if await cursor.fetchone() is not None:
+            return None  # it answers another message: not a reminder's button
     cursor = await conn.execute(
         f"""
         select {_TAPPED_COLUMNS}
@@ -151,6 +173,7 @@ async def reminder_answered(
         join public.appointments a on a.id = r.appointment_id
         join public.services s on s.id = a.service_id
         where m.conversation_id = %s and r.status = 'queued' and r.created_at >= %s
+          and m.meta_message_id is null and m.send_started_at is not null
           and m.delivery_status <> 'failed'
         order by r.created_at desc, r.id desc
         limit 1

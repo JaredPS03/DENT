@@ -81,7 +81,7 @@ Como evidencia guarda solo el final de los ids, nunca tu número.
 
 ## 5. El recordatorio y sus botones (hito 1D)
 
-Antes, en Meta, da de alta en el número de prueba la plantilla `recordatorio_cita` con el texto de la especificación, en español de México (`es_MX`) y con tres respuestas rápidas: **Confirmo**, **Cambiar** y **Cancelar**, escritas así. El worker la busca aprobada y como utilidad; el seed ya la marca así en el consultorio A.
+Antes, en Meta, da de alta en el número de prueba la plantilla `recordatorio_cita` con el texto de la especificación, en español de México (`es_MX`) y con tres respuestas rápidas: **Confirmo**, **Cambiar horario** y **Cancelar cita**, escritas así. El worker la busca aprobada y como utilidad; el seed ya la marca así en el consultorio A.
 
 1. **Agenda una cita** con el bot para cualquier día.
 2. **Tráela a 24 h** para no esperar. En el SQL Editor corre las dos sentencias en este orden (la segunda va aparte porque mover la cita vuelve a marcar cuándo se fijó su hora):
@@ -103,8 +103,8 @@ Antes, en Meta, da de alta en el número de prueba la plantilla `recordatorio_ci
 3. **Espera hasta 15 minutos** con el worker corriendo: te llega el recordatorio.
 4. **Toca un botón:**
    - **Confirmo:** la cita queda confirmada y el bot te lo dice.
-   - **Cambiar:** te ofrece hasta tres horarios; toca uno y la cita se mueve.
-   - **Cancelar:** la cita se cancela y el bot te ofrece otra fecha.
+   - **Cambiar horario:** te ofrece hasta tres horarios con el mismo dentista, cerca de la hora de tu cita; toca uno y la cita se mueve.
+   - **Cancelar cita:** la cita se cancela y el bot te ofrece otra fecha.
 5. **Lo que quedó registrado:**
 
    ```sql
@@ -129,4 +129,4 @@ Para recibir tú las alertas de operación, pon `OPS_ALERT_PHONE` con tu número
 | `error_code` 131030 | En Meta, tu celular no está en la lista de destinatarios del número de prueba. |
 | `error_code` 190 | El token de acceso venció: genera otro. |
 | No llega el recordatorio | En el log del worker, `reminders.queued` dice cuántos salieron. Si dice `without_template`, la plantilla no está aprobada como utilidad en `templates`. Si dice `too_late`, la cita ya es hoy. |
-| Un botón del recordatorio no hace nada | `reminders.tap_without_reminder`: la etiqueta del botón en Meta no es exactamente Confirmo, Cambiar o Cancelar. |
+| Un botón del recordatorio no hace nada | `reminders.tap_without_reminder`: la etiqueta del botón en Meta no es exactamente Confirmo, Cambiar horario o Cancelar cita. |

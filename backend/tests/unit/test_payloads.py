@@ -145,3 +145,24 @@ def test_text_postgres_cannot_store_is_replaced_and_the_rest_kept() -> None:
 def test_payloads_that_are_not_whatsapp_webhooks_are_rejected(raw: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         split_payload(raw)
+
+
+def test_two_equal_notices_about_an_account_are_two_items_when_meta_sent_them_apart() -> None:
+    """Approved, paused and approved again: the third looks like the first but for entry.time
+    (revisor-seguridad). A retry of the same webhook keeps the same key."""
+    value = {
+        "event": "APPROVED",
+        "message_template_name": "recordatorio_cita",
+        "message_template_language": "es_MX",
+    }
+
+    def notice(moment: int) -> dict[str, object]:
+        raw = webhook_payload({"field": "message_template_status_update", "value": dict(value)})
+        raw["entry"][0]["time"] = moment
+        return raw
+
+    first, again, retry = (
+        split_payload(notice(t))[1][0].dedup_key for t in (1751247548, 1751250000, 1751247548)
+    )
+    assert first != again
+    assert first == retry

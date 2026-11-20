@@ -29,12 +29,12 @@ EVERY = timedelta(hours=1)
 
 # {{1}} of alerta_axon.
 PHRASES: dict[OpsAlertKind, str] = {
-    "unanswered": "mensajes de pacientes sin respuesta",
+    "unanswered": "mensajes de pacientes sin respuesta tras 5 minutos",
     "uncertain_sends": "envíos con resultado incierto",
     "reminder_failed": "recordatorios que no salieron",
-    "template": "plantillas rechazadas, pausadas o cambiadas de categoría",
-    "quality": "baja de calidad o de límite del número",
-    "account": "avisos de restricción de la cuenta de WhatsApp",
+    "template": "plantillas rechazadas, pausadas o con cambio de categoría o calidad",
+    "quality": "bajó la calidad o el límite del número",
+    "account": "restricción en la cuenta de WhatsApp",
     "dead_letters": "trabajos fallidos en la cola",
 }
 

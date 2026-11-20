@@ -102,13 +102,15 @@ class MemoryStore:
         self.files.pop(path, None)
         self.stored_at.pop(path, None)
 
-    async def list_older(self, clinic_id: UUID, before: datetime, limit: int) -> list[str]:
-        paths = [
-            path
-            for path, stored in self.stored_at.items()
-            if path.startswith(f"{clinic_id}/") and stored < before
-        ]
-        return sorted(paths)[:limit]
+    async def list_page(
+        self, clinic_id: UUID, before: datetime, after: str | None, limit: int
+    ) -> tuple[list[str], str | None]:
+        keys = sorted(path for path in self.files if path.startswith(f"{clinic_id}/"))
+        if after is not None:
+            keys = [key for key in keys if key > after]
+        page, rest = keys[:limit], keys[limit:]
+        older = [key for key in page if self.stored_at[key] < before]
+        return older, (page[-1] if rest else None)
 
 
 def make_context(

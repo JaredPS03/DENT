@@ -152,6 +152,8 @@ async def accept_consent(
     """Proof of consent: the notice version and the message where the patient tapped Acepto. The
     patient's row is locked first, so an erasure running at the same time waits and then sees it."""
     await conn.execute("select id from public.patients where id = %s for update", (patient_id,))
+    # An earlier "No acepto" no longer holds back the reminders.
+    await conn.execute("update public.patients set privacy_declined_at = null where id = %s", (patient_id,))
     await conn.execute(
         """
         insert into public.consents (clinic_id, patient_id, notice_version, accepted_at, message_id)
@@ -161,6 +163,14 @@ async def accept_consent(
         )
         """,
         (clinic_id, patient_id, notice_version, message_id, patient_id, notice_version),
+    )
+
+
+async def mark_consent_declined(conn: AsyncConnection, patient_id: UUID) -> None:
+    """The patient tapped "No acepto": no automatic reminder goes to them until they accept."""
+    await conn.execute(
+        "update public.patients set privacy_declined_at = coalesce(privacy_declined_at, now()) where id = %s",
+        (patient_id,),
     )
 
 
@@ -442,6 +452,8 @@ class PendingAlert:
     priority: str
     conversation_id: UUID
     clinic_name: str
+    # 2: the alert again of an urgency nobody attended.
+    round: int = 1
 
 
 async def claim_team_alert(conn: AsyncConnection, escalation_id: UUID) -> PendingAlert | None:
@@ -471,7 +483,7 @@ async def claim_team_alert(conn: AsyncConnection, escalation_id: UUID) -> Pendin
               )
           and u.clinic_id = t.clinic_id and u.user_id = t.user_id
           and e.id = t.escalation_id and c.id = t.clinic_id
-        returning t.id, u.display_name, u.alert_phone, e.priority, e.conversation_id, c.name
+        returning t.id, u.display_name, u.alert_phone, e.priority, e.conversation_id, c.name, t.round
         """,
         (escalation_id,),
     )

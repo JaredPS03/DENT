@@ -12,7 +12,7 @@ import pytest
 from app.bot import fixed
 from app.bot.fixed import Voice
 from app.bot.prompt import at_time, spoken_day
-from app.bot.reminder_taps import MOVE_PREFIX, first_per_day, read_taps, when_phrase
+from app.bot.reminder_taps import MOVE_PREFIX, closest_per_day, read_taps, when_phrase
 from app.core.config import SettingsError, load_settings
 from app.db.conversations import PendingMessage
 from app.jobs.timing import clinic_zone, slot_of
@@ -96,15 +96,39 @@ def test_the_reminder_parameters_carry_only_what_the_message_needs() -> None:
     )
     assert parameters == [
         "Ana",
-        "Limpieza dental",
-        "miércoles 18 de noviembre",
-        "10:00 am",
+        "limpieza dental",
         "Clínica Dental Sonrisa",
+        "miércoles 18 de noviembre a las 10:00 am",
     ]
     assert templates.fill(templates.REMINDER_BODY, parameters) == (
-        "Hola Ana, este es el recordatorio de la cita de Limpieza dental mañana miércoles 18 de noviembre "
-        "a las 10:00 am en Clínica Dental Sonrisa."
+        "Hola Ana, un recordatorio: la cita de limpieza dental en Clínica Dental Sonrisa es mañana "
+        "miércoles 18 de noviembre a las 10:00 am. ¿Confirmamos?"
     )
+
+
+def test_one_o_clock_in_the_reminder_is_singular_too() -> None:
+    parameters = templates.reminder_parameters(
+        patient_name="ana",
+        service_name="Valoración",
+        local_start=datetime(2026, 11, 18, 13, 30, tzinfo=CDMX),
+        clinic_name="X",
+    )
+    assert parameters[0] == "Ana"  # typed in lowercase, greeted with its capital
+    assert parameters[3] == "miércoles 18 de noviembre a la 1:30 pm"
+
+
+@pytest.mark.parametrize(
+    ("service", "phrase"),
+    [
+        ("Limpieza", "limpieza"),
+        ("Blanqueamiento LED", "blanqueamiento LED"),
+        ("LED", "LED"),
+        (None, "consulta"),
+        ("  ", "consulta"),
+    ],
+)
+def test_the_service_reads_in_the_middle_of_a_sentence(service: str | None, phrase: str) -> None:
+    assert templates.service_phrase(service) == phrase
 
 
 def test_a_patient_without_a_name_is_greeted_hola_de_nuevo() -> None:
@@ -118,10 +142,14 @@ def test_a_patient_without_a_name_is_greeted_hola_de_nuevo() -> None:
 
 
 def test_the_body_and_buttons_are_the_ones_submitted_to_meta() -> None:
+    """Revisor-clinico: not ending in a variable, asking for the confirmation, and labels that a
+    quick thumb does not mix up (Cambiar and Cancelar looked alike)."""
     assert spoken_day(datetime(2026, 11, 20, tzinfo=CDMX)) == "viernes 20 de noviembre"
-    assert set(templates.REMINDER_BUTTONS) == {"confirmo", "cambiar", "cancelar"}
-    assert "{5}" in templates.REMINDER_BODY
-    assert "{6}" not in templates.REMINDER_BODY
+    assert templates.REMINDER_BODY.endswith("¿Confirmamos?")
+    assert "{4}" in templates.REMINDER_BODY
+    assert "{5}" not in templates.REMINDER_BODY
+    assert templates.REMINDER_BUTTON_LABELS == ("Confirmo", "Cambiar horario", "Cancelar cita")
+    assert all(len(label) <= 25 for label in templates.REMINDER_BUTTON_LABELS)
 
 
 @pytest.mark.parametrize(
@@ -151,6 +179,7 @@ def test_the_fixed_answers_respect_tu_and_usted() -> None:
         fixed.reminder_already_cancelled(INFORMAL),
         fixed.reminder_already_past(INFORMAL),
         fixed.reminder_already_moved(INFORMAL, when),
+        fixed.reminder_running_late(INFORMAL, "hoy a las 10:00 am"),
     ]
     formal = [
         fixed.reminder_confirmed(FORMAL, "Limpieza", when),
@@ -164,6 +193,7 @@ def test_the_fixed_answers_respect_tu_and_usted() -> None:
         fixed.reminder_already_cancelled(FORMAL),
         fixed.reminder_already_past(FORMAL),
         fixed.reminder_already_moved(FORMAL, when),
+        fixed.reminder_running_late(FORMAL, "hoy a las 10:00 am"),
     ]
     # "Tu cita", "te esperamos", "quieres", "dime", "escríbeme", "elijas": only with "tú".
     tu_words = (" tu ", " te ", "quieres", " dime ", "escríbeme", "elijas")
@@ -178,15 +208,16 @@ def test_the_fixed_answers_respect_tu_and_usted() -> None:
     assert "de mañana miércoles" in fixed.reminder_cancelled(INFORMAL, "Limpieza", "mañana miércoles 18")
 
 
-def test_cambiar_offers_the_first_free_slot_of_each_day() -> None:
+def test_cambiar_offers_one_slot_a_day_near_the_appointment_time() -> None:
     provider = uuid4()
 
     def slot(day: int, hour: int) -> Slot:
         start = datetime(2026, 11, day, hour, 0, tzinfo=CDMX).astimezone(UTC)
         return Slot(provider, start, start + timedelta(minutes=45), f"s{day}{hour}", f"{day} {hour}:00")
 
-    slots = [slot(18, 9), slot(18, 10), slot(19, 11), slot(20, 9), slot(21, 9)]
-    assert [s.id for s in first_per_day(slots, CDMX, 3)] == ["s189", "s1911", "s209"]
+    slots = [slot(18, 9), slot(18, 17), slot(19, 11), slot(20, 9), slot(20, 16), slot(21, 18)]
+    assert [s.id for s in closest_per_day(slots, CDMX, 3, time(18, 0))] == ["s1817", "s1911", "s2016"]
+    assert [s.id for s in closest_per_day(slots, CDMX, 3, time(9, 0))] == ["s189", "s1911", "s209"]
 
 
 # Which taps belong to a reminder ------------------------------------------------------------------
@@ -201,12 +232,13 @@ def _message(kind: str, content: str | None, reply_id: str | None = None) -> Pen
 def test_the_three_buttons_are_read_from_their_label_however_written() -> None:
     batch = [
         _message("button", "Confirmo", "Confirmo"),
-        _message("button", "CANCELAR ", "CANCELAR "),
-        _message("button", "cambiar", None),
+        _message("button", "CANCELAR CITA ", "CANCELAR CITA "),
+        _message("button", "Cambiar horario", None),
+        _message("button", "Cancelar", "Cancelar"),  # the short label of the specification
         _message("button", "Sí, seguimos", "Sí, seguimos"),  # another template's button
         _message("text", "Confirmo"),  # typed, not tapped: the AI reads it
     ]
-    assert [tap.action for tap in read_taps(batch)] == ["confirm", "cancel", "change"]
+    assert [tap.action for tap in read_taps(batch)] == ["confirm", "cancel", "change", "cancel"]
 
 
 def test_a_slot_of_cambiar_carries_its_reminder_and_slot_key() -> None:

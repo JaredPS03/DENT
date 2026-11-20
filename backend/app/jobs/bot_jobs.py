@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 ALERT_TEMPLATE = "alerta_equipo"
 ALERT_LANGUAGE = "es_MX"
 PRIORITY_WORDS = {"urgent": "urgente", "normal": "normal"}
+# {{3}} of the second alert, so the team does not read it as a copy of the first one.
+STILL_UNATTENDED = "urgente, sigue sin respuesta"
 CONSENT_WINDOW = timedelta(hours=24)
 MAX_TEMPLATE_NAME = 60
 
@@ -48,7 +50,7 @@ async def handle_team_alert(ctx: WorkerContext, job: TeamAlertJob) -> None:
             [
                 _one_line(alert.member_name) or "equipo",
                 _one_line(alert.clinic_name) or "el consultorio",
-                PRIORITY_WORDS.get(alert.priority, "normal"),
+                STILL_UNATTENDED if alert.round == 2 else PRIORITY_WORDS.get(alert.priority, "normal"),
             ],
             url_button_suffix=str(alert.conversation_id),
         )

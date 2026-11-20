@@ -145,11 +145,12 @@ def reminder_cancelled(voice: Voice, service: str, when: str) -> str:
     of_when = "del " + when.removeprefix("el ") if when.startswith("el ") else "de " + when
     if voice.formal:
         return (
-            f"Listo, cancelé su cita de {service} {of_when}. Si quiere otra fecha, escríbame y le "
-            "busco horario."
+            f"Listo, cancelé su cita de {service} {of_when}. Si fue por error o quiere otra fecha, "
+            "escríbame y le busco horario."
         )
     return (
-        f"Listo, cancelé tu cita de {service} {of_when}. Si quieres otra fecha, escríbeme y te busco horario."
+        f"Listo, cancelé tu cita de {service} {of_when}. Si fue por error o quieres otra fecha, "
+        "escríbeme y te busco horario."
     )
 
 
@@ -158,11 +159,11 @@ def reminder_options(voice: Voice, service: str) -> str:
     if voice.formal:
         return (
             f"Claro. Estos horarios están libres para su {service}. Su cita actual sigue en pie hasta "
-            "que elija uno. Si ninguno le acomoda, dígame qué día prefiere."
+            "que elija uno. Si ninguno le acomoda, dígame qué día y hora prefiere."
         )
     return (
         f"Claro. Estos horarios están libres para tu {service}. Tu cita actual sigue en pie hasta que "
-        "elijas uno. Si ninguno te acomoda, dime qué día prefieres."
+        "elijas uno. Si ninguno te acomoda, dime qué día y hora prefieres."
     )
 
 
@@ -187,8 +188,8 @@ def reminder_moved(voice: Voice, service: str, when: str) -> str:
 def reminder_slot_taken(voice: Voice, *, alternatives: bool) -> str:
     if alternatives:
         if voice.formal:
-            return "Ese horario se acaba de ocupar. Estos siguen libres; su cita actual sigue en pie."
-        return "Ese horario se acaba de ocupar. Estos siguen libres; tu cita actual sigue en pie."
+            return "Ese horario se acaba de ocupar; su cita actual sigue en pie. Estos otros están libres:"
+        return "Ese horario se acaba de ocupar; tu cita actual sigue en pie. Estos otros están libres:"
     if voice.formal:
         return (
             "Ese horario se acaba de ocupar y su cita actual sigue en pie. Dígame qué día le acomoda "
@@ -200,14 +201,30 @@ def reminder_slot_taken(voice: Voice, *, alternatives: bool) -> str:
 def reminder_not_moved(voice: Voice) -> str:
     """The agenda refused the change for another reason (the patient has another appointment then)."""
     if voice.formal:
-        return "No pude mover su cita a ese horario y sigue en pie. Dígame qué día le acomoda y lo busco."
-    return "No pude mover tu cita a ese horario y sigue en pie. Dime qué día te acomoda y lo busco."
+        return (
+            "No pude mover su cita a ese horario; la actual sigue en pie. Dígame qué día le acomoda "
+            "y lo busco."
+        )
+    return "No pude mover tu cita a ese horario; la actual sigue en pie. Dime qué día te acomoda y lo busco."
 
 
 def reminder_already_cancelled(voice: Voice) -> str:
     if voice.formal:
-        return "Esa cita ya está cancelada. Si quiere agendar otra, escríbame y le busco horario."
-    return "Esa cita ya está cancelada. Si quieres agendar otra, escríbeme y te busco horario."
+        return "Esa cita ya está cancelada. Si quiere agendar otra o tiene alguna duda, escríbame."
+    return "Esa cita ya está cancelada. Si quieres agendar otra o tienes alguna duda, escríbeme."
+
+
+def reminder_running_late(voice: Voice, when: str) -> str:
+    """A tap while the appointment is under way: the patient may be on their way, never "ya pasó"."""
+    if voice.formal:
+        return (
+            f"Su cita era {when}. Si va en camino, escríbame y le aviso al equipo; si prefiere otra "
+            "fecha, le busco horario."
+        )
+    return (
+        f"Tu cita era {when}. Si vas en camino, escríbeme y le aviso al equipo; si prefieres otra "
+        "fecha, te busco horario."
+    )
 
 
 def reminder_already_past(voice: Voice) -> str:

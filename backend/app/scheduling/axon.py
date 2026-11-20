@@ -25,6 +25,7 @@ from app.scheduling.connector import (
     PatientBusyError,
     Shift,
     SlotUnavailableError,
+    TimeChangedError,
 )
 
 # Appointments and exceptions are loaded with this margin around the window, for the buffer.
@@ -190,13 +191,19 @@ class AxonAgenda:
             raise SlotUnavailableError(alternatives) from None
 
     async def confirm(
-        self, clinic_id: UUID, appointment_id: UUID, *, actor: Actor, source: str | None = None
+        self,
+        clinic_id: UUID,
+        appointment_id: UUID,
+        *,
+        actor: Actor,
+        source: str | None = None,
+        expected_starts_at: datetime | None = None,
     ) -> Appointment:
         """Pending to confirmed. An appointment already confirmed stays as it is, and nothing is
         recorded twice (a button tapped twice)."""
         now = self._clock()
         async with self._db.clinic_transaction(clinic_id) as conn:
-            current = await _changeable(conn, appointment_id)
+            current = await _changeable(conn, appointment_id, expected_starts_at)
             if current.status == "confirmed":
                 return current
             confirmed = await sql.set_status(conn, current.id, "confirmed")
@@ -218,7 +225,7 @@ class AxonAgenda:
             )
             return confirmed
 
-    async def cancel(
+    async def cancel(  # noqa: PLR0913 - the change, where it came from and what the caller saw
         self,
         clinic_id: UUID,
         appointment_id: UUID,
@@ -226,10 +233,11 @@ class AxonAgenda:
         actor: Actor,
         reason: str | None = None,
         source: str | None = None,
+        expected_starts_at: datetime | None = None,
     ) -> Appointment:
         now = self._clock()
         async with self._db.clinic_transaction(clinic_id) as conn:
-            current = await _changeable(conn, appointment_id)
+            current = await _changeable(conn, appointment_id, expected_starts_at)
             cancelled = await sql.set_status(conn, current.id, "cancelled", cancelled_at=now, reason=reason)
             await sql.void_stale_reminders(conn, cancelled.id)
             await sql.insert_event(
@@ -380,12 +388,18 @@ async def _active_service(conn: AsyncConnection, service_id: UUID) -> sql.Servic
     return service
 
 
-async def _changeable(conn: AsyncConnection, appointment_id: UUID) -> Appointment:
+async def _changeable(
+    conn: AsyncConnection, appointment_id: UUID, expected_starts_at: datetime | None = None
+) -> Appointment:
+    """The appointment, locked for the change. With `expected_starts_at` it must still be at that
+    time, checked under the lock: a move in between is never confirmed or cancelled blindly."""
     current = await sql.appointment_for_update(conn, appointment_id)
     if current is None:
         raise NotFoundError("Esa cita no existe en este consultorio.")
     if current.status not in _ACTIVE:
         raise InvalidChangeError("Solo se puede cambiar una cita pendiente o confirmada.")
+    if expected_starts_at is not None and current.starts_at != expected_starts_at:
+        raise TimeChangedError(current.starts_at)
     return current
 
 

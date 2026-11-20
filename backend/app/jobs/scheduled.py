@@ -29,6 +29,9 @@ OFFERED_SLOTS_TTL = timedelta(days=7)
 # A file younger than this may be on its way to its message (stored, row not yet updated).
 ORPHAN_MIN_AGE = timedelta(days=1)
 MAX_FILES_PER_RUN = 1000
+# The orphan sweep reads Storage's listing in pages, up to this many per day.
+PAGE_SIZE = 1000
+MAX_PAGES = 50
 
 
 async def handle_scheduled(ctx: WorkerContext, job: ScheduledJob) -> None:
@@ -103,16 +106,25 @@ async def _delete_files(ctx: WorkerContext, clinic_id: UUID, paths: list[str]) -
 
 async def _delete_orphans(ctx: WorkerContext, clinic_id: UUID, now: datetime) -> int:
     """Files of the clinic no message points to (left by an erasure or an expiry whose delete
-    failed, or by a crash between storing a file and its row), older than a day."""
+    failed, or by a crash between storing a file and its row), older than a day. The listing is
+    walked page by page and the cap counts deleted files, not listed ones: a clinic with thousands
+    of files in use still gets its orphans removed, wherever they are in the listing."""
     if ctx.media_store is None:
         return 0
-    try:
-        stored = await ctx.media_store.list_older(clinic_id, now - ORPHAN_MIN_AGE, MAX_FILES_PER_RUN)
-    except MediaStoreError:
-        logger.error("jobs.cleanup_list_failed", extra={"clinic_id": str(clinic_id)})  # noqa: TRY400
-        return 0
-    async with ctx.db.clinic_transaction(clinic_id) as conn:
-        used = await db.referenced_paths(conn, stored)
-    orphans = [path for path in stored if path not in used]
-    deleted, _ = await _delete_files(ctx, clinic_id, orphans)
+    deleted = 0
+    after: str | None = None
+    for _ in range(MAX_PAGES):
+        try:
+            stored, after = await ctx.media_store.list_page(clinic_id, now - ORPHAN_MIN_AGE, after, PAGE_SIZE)
+        except MediaStoreError:
+            logger.error("jobs.cleanup_list_failed", extra={"clinic_id": str(clinic_id)})  # noqa: TRY400
+            break
+        if stored:
+            async with ctx.db.clinic_transaction(clinic_id) as conn:
+                used = await db.referenced_paths(conn, stored)
+            orphans = [path for path in stored if path not in used][: MAX_FILES_PER_RUN - deleted]
+            removed, _ = await _delete_files(ctx, clinic_id, orphans)
+            deleted += removed
+        if after is None or deleted >= MAX_FILES_PER_RUN:
+            break
     return deleted

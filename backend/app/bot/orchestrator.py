@@ -206,6 +206,7 @@ async def take_turn(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915 - the steps of 
             ctx,
             clinic=clinic,
             conversation_id=conversation_id,
+            patient_id=conversation.patient_id,
             profile=profile,
             batch=batch,
             requested_at=requested_at,
@@ -294,6 +295,7 @@ async def _consent_gate(  # noqa: PLR0913 - what the gate looks at
     *,
     clinic: data.ClinicProfile,
     conversation_id: UUID,
+    patient_id: UUID,
     profile: data.PatientProfile,
     batch: Sequence[PendingMessage],
     requested_at: datetime | None,
@@ -307,6 +309,9 @@ async def _consent_gate(  # noqa: PLR0913 - what the gate looks at
     voice = Voice(clinic.name, clinic.doctor, clinic.formal)
     tap = _consent_tap(batch, clinic.notice_version)
     if tap is not None and tap[0] == CONSENT_DECLINE_ID:
+        # They were told the assistant will not write again: no automatic reminders either.
+        async with ctx.db.clinic_transaction(clinic.id) as conn:
+            await data.mark_consent_declined(conn, patient_id)
         # The message promises that someone answers: the team is alerted, without details.
         await escalate(
             ctx.db,

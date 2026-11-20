@@ -889,14 +889,14 @@ async def test_each_turn_is_logged_with_tokens_cost_and_prompt_version(
         (conversation_id,),
     )
     assert logged == (
-        "claude-haiku-5-5", "1.0", "replied", 2, ["consultar_mis_citas", "responder"], 200, 40, 6000, True,
+        "claude-haiku-5-5", "1.1", "replied", 2, ["consultar_mis_citas", "responder"], 200, 40, 6000, True,
     )  # fmt: skip
     version = await one(
         db,
         "select prompt_version from public.messages where conversation_id = %s and direction = 'outbound'",
         (conversation_id,),
     )
-    assert version == ("1.0",)
+    assert version == ("1.1",)
     assert (await outbound_of(db, conversation_id))[0][2] == "No tienes citas próximas."
 
 

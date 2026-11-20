@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     anthropic_api_key: SecretStr | None = None
     bot_model: str = Field(default="claude-haiku-5-5", pattern=r"^[a-z0-9][a-z0-9.-]{0,63}$")
     # Copy of docs/prompt-del-bot.md in app/bot/prompts/v<version>.md; every bot message keeps it.
-    bot_prompt_version: str = Field(default="1.0", pattern=r"^[0-9]{1,3}\.[0-9]{1,3}$")
+    bot_prompt_version: str = Field(default="1.1", pattern=r"^[0-9]{1,3}\.[0-9]{1,3}$")
     # Axon's own WhatsApp number (phone_number_id), which alerts the clinic's team with the
     # template alerta_equipo. Without it, escalations only reach the panel.
     axon_phone_number_id: str | None = Field(default=None, pattern=r"^[0-9]{5,32}$")

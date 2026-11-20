@@ -40,7 +40,9 @@ class MediaStore(Protocol):
 
     async def delete(self, clinic_id: UUID, path: str) -> None: ...
 
-    async def list_older(self, clinic_id: UUID, before: datetime, limit: int) -> list[str]: ...
+    async def list_page(
+        self, clinic_id: UUID, before: datetime, after: str | None, limit: int
+    ) -> tuple[list[str], str | None]: ...
 
 
 class S3MediaStore:
@@ -90,25 +92,27 @@ class S3MediaStore:
         except (BotoCoreError, ClientError) as exc:
             raise MediaStoreError(type(exc).__name__) from None
 
-    async def list_older(self, clinic_id: UUID, before: datetime, limit: int) -> list[str]:
-        """Paths of the clinic's files stored before `before`, at most `limit`: the daily cleanup
-        deletes those no message points to any more."""
+    async def list_page(
+        self, clinic_id: UUID, before: datetime, after: str | None, limit: int
+    ) -> tuple[list[str], str | None]:
+        """One page of the clinic's files, in key order after `after`: the paths stored before
+        `before`, and where the next page starts (None at the end). The daily cleanup walks the
+        pages and deletes the files no message points to any more."""
 
-        def collect() -> list[str]:
-            found: list[str] = []
-            paginator = self._client.get_paginator("list_objects_v2")
-            for page in paginator.paginate(Bucket=BUCKET, Prefix=f"{clinic_id}/"):
-                for item in page.get("Contents", []):
-                    if item["LastModified"] < before:
-                        found.append(item["Key"])
-                        if len(found) >= limit:
-                            return found
-            return found
+        def page() -> tuple[list[str], str | None]:
+            arguments: dict[str, Any] = {"Bucket": BUCKET, "Prefix": f"{clinic_id}/", "MaxKeys": limit}
+            if after is not None:
+                arguments["StartAfter"] = after
+            response = self._client.list_objects_v2(**arguments)
+            contents = response.get("Contents", [])
+            older = [item["Key"] for item in contents if item["LastModified"] < before]
+            following = contents[-1]["Key"] if response.get("IsTruncated") and contents else None
+            return older, following
 
         try:
-            paths = await asyncio.to_thread(collect)
+            paths, following = await asyncio.to_thread(page)
         except (BotoCoreError, ClientError) as exc:
             raise MediaStoreError(type(exc).__name__) from None
         for path in paths:
             check_clinic_path(clinic_id, path)
-        return paths
+        return paths, following

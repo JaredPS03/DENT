@@ -14,7 +14,7 @@ import logging
 import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -27,10 +27,10 @@ from app.db import reminders as db
 from app.db.conversations import PendingMessage
 from app.jobs.context import WorkerContext
 from app.scheduling.availability import Slot
-from app.scheduling.connector import Actor, AgendaError, SlotUnavailableError
+from app.scheduling.connector import Actor, AgendaError, SlotUnavailableError, TimeChangedError
 from app.whatsapp import outbound
 from app.whatsapp.outbound import Option
-from app.whatsapp.templates import REMINDER_BUTTONS
+from app.whatsapp.templates import REMINDER_BUTTONS, service_phrase
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 MOVE_PREFIX = "mover:"
 # A tap whose template's Meta id is unknown is tied to the latest reminder sent this long ago.
 TAP_LOOKBACK = timedelta(hours=48)
-# "Cambiar" offers one free slot a day, the first days that have one in this window.
+# "Cambiar" offers one slot a day, near the appointment's own time, the first days that have one.
 OPTIONS_WINDOW = timedelta(days=7)
 MAX_OPTIONS = 3
 SOURCE = "reminder"
@@ -126,19 +126,18 @@ def when_phrase(moment: datetime, now: datetime, tz: ZoneInfo) -> str:
     return f"el {spoken_day(local)} {clock}"
 
 
-def first_per_day(slots: Sequence[Slot], tz: ZoneInfo, limit: int) -> list[Slot]:
-    """The first slot of each day, for the first `limit` days that have one."""
-    chosen: list[Slot] = []
-    days: set[date] = set()
+def closest_per_day(slots: Sequence[Slot], tz: ZoneInfo, limit: int, target: time) -> list[Slot]:
+    """One slot a day, the one nearest to `target` (the appointment's own time), for the first
+    `limit` days that have one: who had an appointment at 6 pm is not offered only mornings."""
+    by_day: dict[date, Slot] = {}
     for slot in slots:
-        day = slot.starts_at.astimezone(tz).date()
-        if day in days:
-            continue
-        days.add(day)
-        chosen.append(slot)
-        if len(chosen) == limit:
-            break
-    return chosen
+        local = slot.starts_at.astimezone(tz)
+        best = by_day.get(local.date())
+        if best is None or _minutes_apart(local.time(), target) < _minutes_apart(
+            best.starts_at.astimezone(tz).time(), target
+        ):
+            by_day[local.date()] = slot
+    return [by_day[day] for day in sorted(by_day)[:limit]]
 
 
 # Internals ----------------------------------------------------------------------------------------
@@ -174,13 +173,10 @@ async def _apply(turn: _Turn, tap: Tap) -> TapReply | None:  # noqa: PLR0911 - o
         logger.info("reminders.tap_without_reminder", extra={"message_id": str(tap.message.id)})
         return None
 
-    voice, service = turn.voice, reminder.service_name
-    if reminder.status == "cancelled":
-        if tap.action == "cancel" and reminder.appointment_id in turn.cancelled:
-            return _text(fixed.reminder_cancelled(voice, service, turn.when(reminder.starts_at)))
-        return _text(fixed.reminder_already_cancelled(voice))
-    if reminder.status not in {"pending", "confirmed"} or reminder.starts_at <= turn.now:
-        return _text(fixed.reminder_already_past(voice))
+    voice, service = turn.voice, service_phrase(reminder.service_name)
+    not_upcoming = _not_upcoming(turn, reminder, tap)
+    if not_upcoming is not None:
+        return not_upcoming
     if tap.action == "move":
         return await _move(turn, reminder, tap)
     if reminder.starts_at != reminder.reminded_at:
@@ -191,14 +187,29 @@ async def _apply(turn: _Turn, tap: Tap) -> TapReply | None:  # noqa: PLR0911 - o
     agenda = turn.ctx.agenda_connector()
     try:
         if tap.action == "confirm":
-            await agenda.confirm(turn.clinic_id, reminder.appointment_id, actor=BOT, source=SOURCE)
+            await agenda.confirm(
+                turn.clinic_id,
+                reminder.appointment_id,
+                actor=BOT,
+                source=SOURCE,
+                expected_starts_at=reminder.reminded_at,
+            )
             reply = fixed.reminder_confirmed(voice, service, turn.when(reminder.starts_at))
         else:
             await agenda.cancel(
-                turn.clinic_id, reminder.appointment_id, actor=BOT, reason=CANCEL_REASON, source=SOURCE
+                turn.clinic_id,
+                reminder.appointment_id,
+                actor=BOT,
+                reason=CANCEL_REASON,
+                source=SOURCE,
+                expected_starts_at=reminder.reminded_at,
             )
             turn.cancelled.add(reminder.appointment_id)
             reply = fixed.reminder_cancelled(voice, service, turn.when(reminder.starts_at))
+    except TimeChangedError as moved:
+        # The team moved it between the lookup and the change: nothing changes, and the patient
+        # learns the new time.
+        return _text(fixed.reminder_already_moved(voice, turn.when(moved.starts_at)))
     except AgendaError:
         # Changed in the same instant by someone else: the AI or the team takes it from the history.
         logger.warning("reminders.tap_refused", extra={"appointment_id": str(reminder.appointment_id)})
@@ -207,15 +218,39 @@ async def _apply(turn: _Turn, tap: Tap) -> TapReply | None:  # noqa: PLR0911 - o
     return _text(reply)
 
 
+def _not_upcoming(turn: _Turn, reminder: db.TappedReminder, tap: Tap) -> TapReply | None:
+    """The answer when the appointment is no longer ahead: cancelled, under way or past."""
+    voice = turn.voice
+    if reminder.status == "cancelled":
+        if tap.action == "cancel" and reminder.appointment_id in turn.cancelled:
+            service = service_phrase(reminder.service_name)
+            return _text(fixed.reminder_cancelled(voice, service, turn.when(reminder.starts_at)))
+        return _text(fixed.reminder_already_cancelled(voice))
+    if reminder.status not in {"pending", "confirmed"}:
+        return _text(fixed.reminder_already_past(voice))
+    if reminder.starts_at <= turn.now:
+        if turn.now < reminder.ends_at:
+            # Under way: the patient may be on their way, and "ya pasó" could make them turn back.
+            return _text(fixed.reminder_running_late(voice, turn.when(reminder.starts_at)))
+        return _text(fixed.reminder_already_past(voice))
+    return None
+
+
 async def _options(turn: _Turn, reminder: db.TappedReminder) -> TapReply:
-    """Cambiar: free slots of the same service, one a day, as buttons. The appointment stays."""
-    slots = await turn.ctx.agenda_connector().find_slots(
-        turn.clinic_id, reminder.service_id, turn.now, turn.now + OPTIONS_WINDOW, actor=BOT
-    )
-    chosen = first_per_day([s for s in slots if s.starts_at != reminder.starts_at], turn.tz, MAX_OPTIONS)
+    """Cambiar: free slots of the same service and the same dentist, one a day and near the
+    appointment's own time, as buttons. The appointment stays until one is chosen."""
+    try:
+        slots = await turn.ctx.agenda_connector().find_slots(
+            turn.clinic_id, reminder.service_id, turn.now, turn.now + OPTIONS_WINDOW, actor=BOT
+        )
+    except AgendaError:
+        # The service is no longer offered, for example: the patient still gets an answer.
+        return _text(fixed.reminder_no_options(turn.voice))
+    chosen = _options_for(reminder, slots, turn.tz)
     if not chosen:
         return _text(fixed.reminder_no_options(turn.voice))
-    return await _offer(turn, reminder, chosen, fixed.reminder_options(turn.voice, reminder.service_name))
+    text = fixed.reminder_options(turn.voice, service_phrase(reminder.service_name))
+    return await _offer(turn, reminder, chosen, text)
 
 
 async def _move(turn: _Turn, reminder: db.TappedReminder, tap: Tap) -> TapReply | None:
@@ -236,13 +271,25 @@ async def _move(turn: _Turn, reminder: db.TappedReminder, tap: Tap) -> TapReply 
                 source=SOURCE,
             )
         except SlotUnavailableError as taken:
-            others = first_per_day(taken.alternatives, turn.tz, MAX_OPTIONS)
+            others = _options_for(reminder, taken.alternatives, turn.tz)
             text = fixed.reminder_slot_taken(turn.voice, alternatives=bool(others))
             return await _offer(turn, reminder, others, text) if others else _text(text)
         except AgendaError:
             return _text(fixed.reminder_not_moved(turn.voice))
         _log(tap, reminder)
-    return _text(fixed.reminder_moved(turn.voice, reminder.service_name, turn.when(slot.starts_at)))
+    service = service_phrase(reminder.service_name)
+    return _text(fixed.reminder_moved(turn.voice, service, turn.when(slot.starts_at)))
+
+
+def _options_for(reminder: db.TappedReminder, slots: Sequence[Slot], tz: ZoneInfo) -> list[Slot]:
+    """With the same dentist (a treatment in course never changes hands unnoticed)."""
+    target = reminder.starts_at.astimezone(tz).time()
+    same = [s for s in slots if s.provider_id == reminder.provider_id and s.starts_at != reminder.starts_at]
+    return closest_per_day(same, tz, MAX_OPTIONS, target)
+
+
+def _minutes_apart(a: time, b: time) -> int:
+    return abs((a.hour * 60 + a.minute) - (b.hour * 60 + b.minute))
 
 
 async def _offer(turn: _Turn, reminder: db.TappedReminder, slots: Sequence[Slot], text: str) -> TapReply:
